@@ -9,7 +9,6 @@ Descripción:
     Convierte un PDF de Iberostar en un objeto Delivery.
 """
 
-from datetime import datetime
 from pathlib import Path
 import re
 
@@ -19,6 +18,7 @@ from config.constants import SALES_POINT_MAPPING
 from models.delivery import Delivery
 from models.product import Product
 from models.sales_point import SalesPoint
+from datetime import datetime, date
 
 
 class PDFParser:
@@ -26,52 +26,29 @@ class PDFParser:
     Convierte un PDF de Iberostar en un objeto Delivery.
     """
 
-    PRODUCT_FORMATS = {
-        "BOTELLA",
-        "LITRO",
-        "UNIDAD",
-        "PAQUETE",
-        "BRIK",
-        "KILO",
-        "MANOJO",
-        "CAJA",
-        "BOLSA",
-        "BANDEJA",
-        "SACO",
-        "BOTE",
-        "LATA",
-        "TARRINA",
-    }
-
     def parse(self, pdf_path: Path) -> Delivery | None:
         """
         Convierte un PDF en un objeto Delivery.
 
-        Si el PDF no pertenece a ninguno de los puntos de venta del
-        sistema, devuelve None para que el Synchronizer lo ignore.
+        Si el PDF no pertenece a ninguno de los puntos de venta
+        soportados, devuelve None.
         """
 
-        text = self._extract_text(pdf_path)
-
-        lines = self._merge_broken_lines(text)
-
-        lines = self._clean_product_lines(lines)
-
-        lines = self._remove_invalid_lines(lines)
-
-        delivery_date = self._extract_date(lines)
+        lines = self._clean_lines(
+            self._merge_broken_lines(
+                self._extract_text(pdf_path)
+            )
+        )
 
         sales_point = self._extract_sales_point(lines)
 
         if sales_point is None:
             return None
 
-        products = self._extract_products(lines)
-
         return Delivery(
             sales_point=sales_point,
-            delivery_date=delivery_date,
-            products=products,
+            delivery_date=self._extract_date(lines),
+            products=self._extract_products(lines),
         )
 
     # ======================================================
@@ -98,11 +75,10 @@ class PDFParser:
 
     def _merge_broken_lines(self, text: str) -> list[str]:
         """
-        Une líneas partidas del PDF.
+        Une las líneas partidas del PDF.
         """
 
         merged = []
-
         current = ""
 
         ignore_prefixes = (
@@ -114,6 +90,12 @@ class PDFParser:
             "Cód.Art.",
         )
 
+        page_pattern = re.compile(
+            r"^\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2}\s+\d+/\d+$"
+        )
+
+        product_pattern = re.compile(r"^\d+\s")
+
         for line in text.splitlines():
 
             line = line.strip()
@@ -121,142 +103,86 @@ class PDFParser:
             if not line:
                 continue
 
-            # --------------------------------------------------
-            # Fin de la tabla de productos.
-            # --------------------------------------------------
-
             if line.startswith("Total"):
 
                 if current:
                     merged.append(current)
-                    current = ""
 
                 merged.append(line)
-
                 break
 
-            # --------------------------------------------------
-            # Ignorar pies de página y cabeceras repetidas.
-            # --------------------------------------------------
-
-            if line.startswith(ignore_prefixes):
+            if (
+                line.startswith(ignore_prefixes)
+                or page_pattern.match(line)
+            ):
                 continue
 
-            # Ignorar "01/07/2026 13:29 1/2"
-            if re.match(r"^\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2}\s+\d+/\d+$", line):
-                continue
-
-            # --------------------------------------------------
-            # Nuevo producto.
-            # --------------------------------------------------
-
-            if re.match(r"^\d+\s", line):
+            if product_pattern.match(line):
 
                 if current:
                     merged.append(current)
 
                 current = line
 
-            # --------------------------------------------------
-            # Continuación del producto anterior.
-            # --------------------------------------------------
+            elif current:
+
+                current += " " + line
 
             else:
 
-                if current:
-                    current += " " + line
-                else:
-                    merged.append(line)
+                merged.append(line)
 
         if current:
             merged.append(current)
 
         return merged
 
-    def _clean_product_lines(
+
+    def _clean_lines(
         self,
         lines: list[str],
     ) -> list[str]:
         """
-        Limpia las líneas de productos eliminando cualquier texto
-        que aparezca después de las dos últimas columnas numéricas.
+        Normaliza las líneas de productos.
 
-        Ejemplo:
-
-        27935 ... 0,691 16,590 POMELO S/R 20 CL
-
-        →
-
-        27935 ... 0,691 16,590
-        """
+        - Elimina el texto sobrante tras las dos últimas columnas numéricas.
+        - Descarta productos incompletos.
+        """ 
 
         cleaned = []
 
-        pattern = re.compile(r"^(.*?\d+,\d+\s+\d+,\d+)")
+        trim_pattern = re.compile(
+            r"^(.*?\d+,\d+\s+\d+,\d+)"
+        )
+
+        valid_product_pattern = re.compile(
+            r"\d+,\d+\s+\d+,\d+$"
+        )
+
+        product_pattern = re.compile(r"^\d+\s")
 
         for line in lines:
 
-            if not re.match(r"^\d+\s", line):
+            if not product_pattern.match(line):
                 cleaned.append(line)
                 continue
 
-            match = pattern.match(line)
+            match = trim_pattern.match(line)
 
-            if match:
-                cleaned.append(match.group(1))
-            else:
+            if not match:
+                continue
+
+            line = match.group(1)
+
+            if valid_product_pattern.search(line):
                 cleaned.append(line)
 
         return cleaned
 
-    def _remove_invalid_lines(
+    def _extract_date(
         self,
         lines: list[str],
-    ) -> list[str]:
-        """
-        Elimina cualquier línea de producto que no termine
-        exactamente en dos números decimales.
-
-        Una línea válida debe terminar en:
-
-            0,691 16,590
-        """
-
-        cleaned = []
-
-        product_pattern = re.compile(r"\d+,\d+\s+\d+,\d+$")
-
-        for line in lines:
-
-            # ----------------------------------------------
-            # Las líneas que NO son productos se conservan.
-            # ----------------------------------------------
-
-            if not re.match(r"^\d+", line):
-                cleaned.append(line)
-                continue
-
-            # ----------------------------------------------
-            # Solo conservamos productos completos.
-            # ----------------------------------------------
-
-            if product_pattern.search(line):
-                cleaned.append(line)
-
-        print("\n" + "=" * 100)
-        print("LÍNEAS TRAS ELIMINAR PRODUCTOS INVÁLIDOS")
-        print("=" * 100)
-
-        for index, line in enumerate(cleaned, start=1):
-            print(f"{index:03d} | {line}")
-
-        print("=" * 100)
-        print(f"TOTAL DE LÍNEAS: {len(cleaned)}")
-        print("=" * 100)
-
-        return cleaned
-
-    def _extract_date(self, lines: list[str]):
+    ) -> date:
         """
         Extrae la fecha del albarán.
         """
@@ -303,9 +229,6 @@ class PDFParser:
 
         products = []
 
-        decimal_pattern = re.compile(r"^\d+,\d+$")
-        integer_pattern = re.compile(r"^\d+$")
-
         for line_number, line in enumerate(lines, start=1):
 
             if line.startswith("Total"):
@@ -321,60 +244,14 @@ class PDFParser:
 
             code = int(tokens[0])
 
-            # --------------------------------------------------
-            # Localizar Precio y Total (dos últimos decimales)
-            # --------------------------------------------------
+            quantity = self._extract_quantity(
+                tokens,
+                line,
+                line_number,
+            )
 
-            decimal_indexes = [
-                index
-                for index, token in enumerate(tokens)
-                if decimal_pattern.match(token)
-            ]
-
-            if len(decimal_indexes) < 2:
-
-                print(
-                    f"[ERROR] Línea {line_number}: "
-                    f"No se encontraron Precio y Total."
-                )
-
-                print(f"        {line}")
-
+            if quantity is None:
                 continue
-
-            price_index = decimal_indexes[-2]
-
-            # --------------------------------------------------
-            # Buscar enteros inmediatamente anteriores
-            # --------------------------------------------------
-
-            integers = []
-
-            index = price_index - 1
-
-            while index >= 0 and integer_pattern.match(tokens[index]):
-                integers.insert(0, tokens[index])
-                index -= 1
-
-            if not integers:
-
-                print(f"[ERROR] Línea {line_number}: " f"No se encontró la cantidad.")
-
-                print(f"        {line}")
-
-                continue
-
-            # Caso normal:
-            # Cantidad Cant.Sol Vale Precio Total
-
-            if len(integers) >= 3:
-                quantity = float(integers[-3])
-
-            # Caso Star Café:
-            # Cantidad Precio Total
-
-            else:
-                quantity = float(integers[-1])
 
             product = Product(
                 code=code,
@@ -394,3 +271,69 @@ class PDFParser:
         print("=" * 100)
 
         return products
+
+    def _extract_quantity(
+        self,
+        tokens: list[str],
+        line: str,
+        line_number: int,
+    ) -> float | None:
+        """
+        Extrae la cantidad de un producto.
+
+        Soporta tanto el formato normal:
+
+            Cantidad Cant.Sol Vale Precio Total
+
+        como el formato reducido:
+
+            Cantidad Precio Total
+        """
+
+        decimal_pattern = re.compile(r"^\d+,\d+$")
+        integer_pattern = re.compile(r"^\d+$")
+
+        decimal_indexes = [
+            index
+            for index, token in enumerate(tokens)
+            if decimal_pattern.match(token)
+        ]
+
+        if len(decimal_indexes) < 2:
+
+            print(
+                f"[ERROR] Línea {line_number}: "
+                f"No se encontraron Precio y Total."
+            )
+
+            print(f"        {line}")
+
+            return None
+
+        price_index = decimal_indexes[-2]
+
+        integers = []
+
+        index = price_index - 1
+
+        while index >= 0 and integer_pattern.match(tokens[index]):
+
+            integers.insert(0, tokens[index])
+
+            index -= 1
+
+        if not integers:
+
+            print(
+                f"[ERROR] Línea {line_number}: "
+                f"No se encontró la cantidad."
+            )
+
+            print(f"        {line}")
+
+            return None
+
+        if len(integers) >= 3:
+            return float(integers[-3])
+
+        return float(integers[-1])

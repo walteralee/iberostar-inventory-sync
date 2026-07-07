@@ -1,35 +1,132 @@
-# Iberostar
+# Iberostar Inventory Synchronizer
 
-Herramienta de sincronización y automatización desarrollada en Python para gestionar la actualización automática de inventarios a partir de albaranes en formato PDF.
+Herramienta desarrollada en Python para sincronizar automáticamente los albaranes PDF generados por Iberostar con sus correspondientes archivos Excel de inventario.
 
-El objetivo del proyecto es leer los albaranes generados por el economato, identificar el punto de venta correspondiente, extraer los productos y cantidades suministradas y actualizar automáticamente el archivo Excel asociado.
+El sistema identifica el punto de venta, extrae los productos y cantidades suministradas y actualiza automáticamente el Excel correspondiente.
+
+---
+
+# 🚀 Instalación
+
+## 1. Clonar el repositorio
+
+```bash
+git clone https://github.com/walteralee/iberostar-inventory-sync.git
+```
+
+Entrar en la carpeta del proyecto:
+
+```bash
+cd iberostar-inventory-sync
+```
+
+---
+
+## 2. Crear un entorno virtual
+
+Windows
+
+```bash
+python -m venv .venv
+```
+
+Activar el entorno
+
+```bash
+.venv\Scripts\activate
+```
+
+Linux / macOS
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+---
+
+## 3. Instalar dependencias
+
+```bash
+pip install -r requirements.txt
+```
+
+---
+
+## 4. Configurar el proyecto
+
+Crear el archivo `.env` a partir del ejemplo:
+
+Windows
+
+```bash
+copy .env.example .env
+```
+
+Linux / macOS
+
+```bash
+cp .env.example .env
+```
+
+---
+
+## 5. Preparar los datos
+
+Colocar los archivos PDF y Excel dentro de la estructura correspondiente:
+
+```
+storage/
+└── input/
+    ├── excels/
+    └── pdfs/
+```
+
+---
+
+## 6. Ejecutar
+
+```bash
+python app/backend/main.py
+```
+
+o simplemente
+
+```bash
+RUN.bat
+```
 
 ---
 
 # Características
 
-- Lectura automática de archivos PDF.
+- Lectura automática de albaranes PDF.
 - Identificación automática del punto de venta.
-- Extracción de productos y cantidades.
+- Extracción automática de códigos y cantidades.
 - Actualización automática de archivos Excel.
-- Arquitectura modular preparada para futuras ampliaciones.
+- Arquitectura modular y escalable.
+- Preparado para incorporar interfaz gráfica.
 - Sistema de copias de seguridad.
-- Preparado para incorporar una interfaz gráfica en el futuro.
+- Código organizado por capas.
 
 ---
 
 # Arquitectura
 
 ```
-Iberostar/
-
-app/
-├── backend/
-└── frontend/
-
-storage/
-docs/
-tests/
+Iberostar
+│
+├── app
+│   ├── backend
+│   └── frontend
+│
+├── storage
+├── docs
+├── tests
+│
+├── README.md
+├── requirements.txt
+└── RUN.bat
 ```
 
 ---
@@ -41,7 +138,7 @@ PDF
 
 ↓
 
-Lectura
+Extracción del texto
 
 ↓
 
@@ -49,15 +146,19 @@ Interpretación
 
 ↓
 
-Punto de venta
+Identificación del punto de venta
 
 ↓
 
-Excel correspondiente
+Extracción de productos
 
 ↓
 
-Actualización
+Localización del Excel
+
+↓
+
+Actualización automática
 
 ↓
 
@@ -72,18 +173,18 @@ Guardar
 - OpenPyXL
 - PDFPlumber
 - PyMuPDF
-- Python Dotenv
+- python-dotenv
 
 ---
 
 # Estado del proyecto
 
-Actualmente el proyecto se encuentra en fase de desarrollo.
+Actualmente el proyecto se encuentra en desarrollo.
 
-Versión actual:
+Versión actual
 
 ```
-v0.1
+v0.1.0
 ```
 
 ---

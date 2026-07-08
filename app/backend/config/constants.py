@@ -28,6 +28,7 @@ BAR_SALON = "Bar_Salon"
 COMEDOR = "Comedor"
 MANOLETE = "Manolete"
 STARCAFE = "Starcafe"
+GENERALES = "Generales"
 
 SALES_POINTS = (
     BAR_PISCINA,
@@ -35,6 +36,7 @@ SALES_POINTS = (
     COMEDOR,
     MANOLETE,
     STARCAFE,
+    GENERALES,
 )
 
 # ==========================================================
@@ -47,6 +49,7 @@ SALES_POINT_MAPPING = {
     "XAN - Comedor": COMEDOR,
     "XAN - Manolete": MANOLETE,
     "XAN - Starcafé": STARCAFE,
+    "XAN - Generales Bar y Comedor" : GENERALES,
 }
 
 VALID_PDF_DEPARTMENTS = frozenset(

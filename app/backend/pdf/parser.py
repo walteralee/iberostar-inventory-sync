@@ -35,9 +35,7 @@ class PDFParser:
         """
 
         lines = self._clean_lines(
-            self._merge_broken_lines(
-                self._extract_text(pdf_path)
-            )
+            self._merge_broken_lines(self._extract_text(pdf_path))
         )
 
         sales_point = self._extract_sales_point(lines)
@@ -90,9 +88,7 @@ class PDFParser:
             "Cód.Art.",
         )
 
-        page_pattern = re.compile(
-            r"^\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2}\s+\d+/\d+$"
-        )
+        page_pattern = re.compile(r"^\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2}\s+\d+/\d+$")
 
         product_pattern = re.compile(r"^\d+\s")
 
@@ -107,14 +103,12 @@ class PDFParser:
 
                 if current:
                     merged.append(current)
+                    current = ""  # <-- Añade esta línea
 
                 merged.append(line)
                 break
 
-            if (
-                line.startswith(ignore_prefixes)
-                or page_pattern.match(line)
-            ):
+            if line.startswith(ignore_prefixes) or page_pattern.match(line):
                 continue
 
             if product_pattern.match(line):
@@ -137,7 +131,6 @@ class PDFParser:
 
         return merged
 
-
     def _clean_lines(
         self,
         lines: list[str],
@@ -147,17 +140,13 @@ class PDFParser:
 
         - Elimina el texto sobrante tras las dos últimas columnas numéricas.
         - Descarta productos incompletos.
-        """ 
+        """
 
         cleaned = []
 
-        trim_pattern = re.compile(
-            r"^(.*?\d+,\d+\s+\d+,\d+)"
-        )
+        trim_pattern = re.compile(r"^(.*?\d+,\d+\s+\d+,\d+)")
 
-        valid_product_pattern = re.compile(
-            r"\d+,\d+\s+\d+,\d+$"
-        )
+        valid_product_pattern = re.compile(r"\d+,\d+\s+\d+,\d+$")
 
         product_pattern = re.compile(r"^\d+\s")
 
@@ -294,17 +283,12 @@ class PDFParser:
         integer_pattern = re.compile(r"^\d+$")
 
         decimal_indexes = [
-            index
-            for index, token in enumerate(tokens)
-            if decimal_pattern.match(token)
+            index for index, token in enumerate(tokens) if decimal_pattern.match(token)
         ]
 
         if len(decimal_indexes) < 2:
 
-            print(
-                f"[ERROR] Línea {line_number}: "
-                f"No se encontraron Precio y Total."
-            )
+            print(f"[ERROR] Línea {line_number}: " f"No se encontraron Precio y Total.")
 
             print(f"        {line}")
 
@@ -324,10 +308,7 @@ class PDFParser:
 
         if not integers:
 
-            print(
-                f"[ERROR] Línea {line_number}: "
-                f"No se encontró la cantidad."
-            )
+            print(f"[ERROR] Línea {line_number}: " f"No se encontró la cantidad.")
 
             print(f"        {line}")
 

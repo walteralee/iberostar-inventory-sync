@@ -58,3 +58,11 @@ TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
 TEMPLATES_DIR.mkdir(parents=True, exist_ok=True)
 REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
+
+# ==========================================================
+# REGISTRY
+# ==========================================================
+
+REGISTRY_DIR = STORAGE_DIR / "registry"
+
+REGISTRY_FILE = REGISTRY_DIR / "imported_deliveries.json"

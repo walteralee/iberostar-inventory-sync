@@ -51,7 +51,7 @@ desktop.ini
 # ==========================================================
 
 *.log
-storage/logs/**
+storage/logs/*
 
 !storage/logs/
 !storage/logs/.gitkeep
@@ -60,7 +60,7 @@ storage/logs/**
 # TEMP FILES
 # ==========================================================
 
-storage/temp/**
+storage/temp/*
 
 !storage/temp/
 !storage/temp/.gitkeep
@@ -69,7 +69,7 @@ storage/temp/**
 # BACKUPS
 # ==========================================================
 
-storage/backup/**
+storage/backup/*
 
 !storage/backup/
 !storage/backup/.gitkeep
@@ -78,7 +78,7 @@ storage/backup/**
 # GENERATED OUTPUT
 # ==========================================================
 
-storage/output/**
+storage/output/*
 
 !storage/output/
 !storage/output/.gitkeep
@@ -87,18 +87,18 @@ storage/output/**
 # HOTEL DATA (PRIVATE)
 # ==========================================================
 
-# Ignorar todos los Excel generados
-storage/input/excels/**
-
-# Ignorar todos los PDF importados
-storage/input/pdfs/**
-
-# Mantener la estructura
+# Mantener la estructura de carpetas
 !storage/input/
 !storage/input/excels/
-!storage/input/excels/.gitkeep
 !storage/input/pdfs/
+
+# Mantener los archivos .gitkeep
+!storage/input/excels/.gitkeep
 !storage/input/pdfs/.gitkeep
+
+# Ignorar todos los datos importados
+storage/input/excels/*
+storage/input/pdfs/*
 
 # ==========================================================
 # TEMPLATES (VERSIONADAS)
@@ -112,7 +112,7 @@ storage/input/pdfs/**
 # REGISTRY (VERSIONADO)
 # ==========================================================
 
-# Mantener el registro vacío del sistema
+# Mantener el registro del sistema
 !storage/registry/
 !storage/registry/imported_deliveries.json
 

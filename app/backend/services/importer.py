@@ -9,20 +9,24 @@ Descripción:
     Servicio encargado de importar nuevos albaranes PDF al sistema.
 """
 
+from datetime import datetime
 from pathlib import Path
 from tkinter import Tk, filedialog
-from datetime import datetime
+from services.registry import Registry
 
-from config.constants import MONTHS
-from config.settings import INPUT_PDFS_DIR
-from config.constants import (
-    PDF_IBS_CODE_LABEL,
-    PDF_DATE_LABEL,
-    PDF_DESTINATION_LABEL,
-)
+import shutil
 
 import pdfplumber
-import shutil
+
+
+from config.constants import (
+    MONTHS,
+    PDF_DATE_LABEL,
+    PDF_DESTINATION_LABEL,
+    PDF_IBS_CODE_LABEL,
+)
+from config.settings import INPUT_PDFS_DIR
+from models.pdf_metadata import PDFMetadata
 
 
 class Importer:
@@ -37,6 +41,7 @@ class Importer:
         Returns:
             Lista de archivos PDF seleccionados.
         """
+        registry = Registry()
 
         pdf_files = self._select_pdf_files()
 
@@ -63,43 +68,56 @@ class Importer:
 
         for index, pdf_file in enumerate(pdf_files, start=1):
 
-            text = self._extract_text(pdf_file)
+            try:
 
-            ibs_code = self._extract_ibs_code(text)
-            delivery_date = self._extract_date(text)
-            sales_point = self._extract_sales_point(text)
+                text = self._extract_text(pdf_file)
 
-            destination = self._build_destination_directory(
-                delivery_date,
-            )
+                metadata = self._extract_metadata(text)
 
-            self._create_directory(destination)
-
-            if self._delivery_exists(
-                ibs_code,
-                destination,
-            ):
-
-                status = "YA EXISTE"
-
-            else:
-
-                self._copy_pdf(
-                    pdf_file,
-                    destination,
+                destination = self._build_destination_directory(
+                    metadata.delivery_date,
                 )
 
-                status = "COPIADO"
+                self._create_directory(destination)
 
-            print("\n" + "=" * 100)
-            print(f"PDF {index}")
-            print("=" * 100)
-            print(f"Archivo       : {pdf_file.name}")
-            print(f"Código IBS    : {ibs_code}")
-            print(f"Fecha         : {delivery_date}")
-            print(f"Punto de venta: {sales_point}")
-            print(f"Destino       : {destination}")
-            print(f"Estado        : {status}")
+                if registry.exists(metadata.ibs_code):
+
+                    status = "YA EXISTE"
+
+                else:
+
+                    self._copy_pdf(
+                        pdf_file,
+                        destination,
+                    )
+
+                    registry.register(
+                        metadata,
+                        destination / pdf_file.name,
+                    )
+
+                    status = "COPIADO"
+
+                print("\n" + "=" * 100)
+                print(f"PDF {index}")
+                print("=" * 100)
+                print(f"Archivo       : {pdf_file.name}")
+                print(f"Código IBS    : {metadata.ibs_code}")
+                print(f"Fecha         : {metadata.delivery_date}")
+                print(f"Punto de venta: {metadata.sales_point}")
+                print(f"Destino       : {destination}")
+                print(f"Estado        : {status}")
+
+            except Exception as error:
+
+                print("\n" + "=" * 100)
+                print(f"PDF {index}")
+                print("=" * 100)
+                print(f"Archivo       : {pdf_file.name}")
+                print(f"Estado        : ERROR")
+                print(f"Motivo        : {error}")
+
+        registry.save()
 
         return pdf_files
 
@@ -157,71 +175,65 @@ class Importer:
 
         return "\n".join(pages)
 
-    def _extract_ibs_code(
+    def _extract_metadata(
         self,
         text: str,
-    ) -> str:
+    ) -> PDFMetadata:
         """
-        Extrae el código IBS del PDF.
-
-        Args:
-            text: Texto completo del PDF.
-
-        Returns:
-            Código IBS.
+        Extrae toda la información necesaria del PDF
+        recorriendo el texto una única vez.
         """
+
+        ibs_code = None
+        delivery_date = None
+        sales_point = None
 
         for line in text.splitlines():
+
+            line = line.strip()
 
             if line.startswith(PDF_IBS_CODE_LABEL):
 
-                return line.replace(PDF_IBS_CODE_LABEL, "").strip()
+                ibs_code = line.replace(
+                    PDF_IBS_CODE_LABEL,
+                    "",
+                ).strip()
 
-        raise ValueError("Código IBS no encontrado.")
+            elif line.startswith(PDF_DATE_LABEL):
 
-    def _extract_date(
-        self,
-        text: str,
-    ) -> str:
-        """
-        Extrae la fecha del PDF.
+                delivery_date = line.replace(
+                    PDF_DATE_LABEL,
+                    "",
+                ).strip()
 
-        Args:
-            text: Texto completo del PDF.
+            elif line.startswith(PDF_DESTINATION_LABEL):
 
-        Returns:
-            Fecha del albarán.
-        """
+                sales_point = line.replace(
+                    PDF_DESTINATION_LABEL,
+                    "",
+                ).strip()
 
-        for line in text.splitlines():
+            if (
+                ibs_code is not None
+                and delivery_date is not None
+                and sales_point is not None
+            ):
+                break
 
-            if line.startswith(PDF_DATE_LABEL):
+        if ibs_code is None:
+            raise ValueError("Código IBS no encontrado.")
 
-                return line.replace(PDF_DATE_LABEL, "").strip()
+        if delivery_date is None:
+            raise ValueError("Fecha no encontrada.")
 
-        raise ValueError("Fecha no encontrada.")
+        if sales_point is None:
+            raise ValueError("Punto de venta no encontrado.")
 
-    def _extract_sales_point(
-        self,
-        text: str,
-    ) -> str:
-        """
-        Extrae el punto de venta del PDF.
-
-        Args:
-            text: Texto completo del PDF.
-
-        Returns:
-            Nombre del punto de venta.
-        """
-
-        for line in text.splitlines():
-
-            if line.startswith(PDF_DESTINATION_LABEL):
-
-                return line.replace(PDF_DESTINATION_LABEL, "").strip()
-
-        raise ValueError("Punto de venta no encontrado.")
+        return PDFMetadata(
+            ibs_code=ibs_code,
+            delivery_date=delivery_date,
+            sales_point=sales_point,
+        )
 
     def _build_destination_directory(
         self,
@@ -275,7 +287,7 @@ class Importer:
         Copia un PDF a la carpeta de destino.
 
         Args:
-            ibs_code: Código IBS del albarán.
+            pdf_file: PDF seleccionado.
             destination: Carpeta destino.
         """
 
@@ -283,21 +295,3 @@ class Importer:
             pdf_file,
             destination / pdf_file.name,
         )
-
-    def _delivery_exists(
-        self,
-        ibs_code: str,
-        destination: Path,
-    ) -> bool:
-        """
-        Comprueba si el albarán ya existe en la carpeta destino.
-
-        Args:
-            pdf_file: PDF seleccionado.
-            destination: Carpeta destino.
-
-        Returns:
-            True si existe.
-        """
-
-        return (destination / pdf_file.name).exists()

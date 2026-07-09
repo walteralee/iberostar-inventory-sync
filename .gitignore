@@ -87,18 +87,18 @@ storage/output/*
 # HOTEL DATA (PRIVATE)
 # ==========================================================
 
-# Mantener la estructura de carpetas
+# Mantener la estructura
 !storage/input/
 !storage/input/excels/
 !storage/input/pdfs/
 
-# Mantener los archivos .gitkeep
-!storage/input/excels/.gitkeep
-!storage/input/pdfs/.gitkeep
-
-# Ignorar todos los datos importados
+# Ignorar todo el contenido
 storage/input/excels/*
 storage/input/pdfs/*
+
+# Excepto los .gitkeep
+!storage/input/excels/.gitkeep
+!storage/input/pdfs/.gitkeep
 
 # ==========================================================
 # TEMPLATES (VERSIONADAS)

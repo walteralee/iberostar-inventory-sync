@@ -32,7 +32,7 @@ class Importer:
 
     def run(self) -> list[Path]:
         """
-        Ejecuta el proceso de importación de nuevos PDF
+        Ejecuta el proceso de importación de nuevos PDF.
 
         Returns:
             Lista de archivos PDF seleccionados.
@@ -68,12 +68,28 @@ class Importer:
             ibs_code = self._extract_ibs_code(text)
             delivery_date = self._extract_date(text)
             sales_point = self._extract_sales_point(text)
-            destination = self._build_destination_directory(delivery_date)
-            self._create_directory(destination)
-            self._copy_pdf(
-                pdf_file,
-                destination,
+
+            destination = self._build_destination_directory(
+                delivery_date,
             )
+
+            self._create_directory(destination)
+
+            if self._delivery_exists(
+                ibs_code,
+                destination,
+            ):
+
+                status = "YA EXISTE"
+
+            else:
+
+                self._copy_pdf(
+                    pdf_file,
+                    destination,
+                )
+
+                status = "COPIADO"
 
             print("\n" + "=" * 100)
             print(f"PDF {index}")
@@ -83,6 +99,7 @@ class Importer:
             print(f"Fecha         : {delivery_date}")
             print(f"Punto de venta: {sales_point}")
             print(f"Destino       : {destination}")
+            print(f"Estado        : {status}")
 
         return pdf_files
 
@@ -258,7 +275,7 @@ class Importer:
         Copia un PDF a la carpeta de destino.
 
         Args:
-            pdf_file: PDF seleccionado.
+            ibs_code: Código IBS del albarán.
             destination: Carpeta destino.
         """
 
@@ -266,3 +283,21 @@ class Importer:
             pdf_file,
             destination / pdf_file.name,
         )
+
+    def _delivery_exists(
+        self,
+        ibs_code: str,
+        destination: Path,
+    ) -> bool:
+        """
+        Comprueba si el albarán ya existe en la carpeta destino.
+
+        Args:
+            pdf_file: PDF seleccionado.
+            destination: Carpeta destino.
+
+        Returns:
+            True si existe.
+        """
+
+        return (destination / pdf_file.name).exists()

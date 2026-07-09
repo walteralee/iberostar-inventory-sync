@@ -109,12 +109,17 @@ storage/input/pdfs/*
 !storage/templates/**
 
 # ==========================================================
-# REGISTRY (VERSIONADO)
+# REGISTRY
 # ==========================================================
 
-# Mantener el registro del sistema
+# Mantener la carpeta
 !storage/registry/
-!storage/registry/imported_deliveries.json
+
+# Ignorar el registro generado por la aplicación
+storage/registry/imported_deliveries.json
+
+# Mantener únicamente la estructura
+!storage/registry/.gitkeep
 
 # ==========================================================
 # DOCUMENTATION (Opcional)

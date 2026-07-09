@@ -67,8 +67,8 @@ class Importer:
             ibs_code = self._extract_ibs_code(text)
             delivery_date = self._extract_date(text)
             sales_point = self._extract_sales_point(text)
-
             destination = self._build_destination_directory(delivery_date)
+            self._create_directory(destination)
 
             print("\n" + "=" * 100)
             print(f"PDF {index}")
@@ -227,3 +227,19 @@ class Importer:
         day = str(parsed_date.day)
 
         return INPUT_PDFS_DIR / year / month / day
+
+    def _create_directory(
+        self,
+        directory: Path,
+    ) -> None:
+        """
+        Crea una carpeta si no existe.
+
+        Args:
+            directory: Carpeta a crear.
+        """
+
+        directory.mkdir(
+            parents=True,
+            exist_ok=True,
+        )

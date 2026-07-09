@@ -22,6 +22,7 @@ from config.constants import (
 )
 
 import pdfplumber
+import shutil
 
 
 class Importer:
@@ -69,6 +70,10 @@ class Importer:
             sales_point = self._extract_sales_point(text)
             destination = self._build_destination_directory(delivery_date)
             self._create_directory(destination)
+            self._copy_pdf(
+                pdf_file,
+                destination,
+            )
 
             print("\n" + "=" * 100)
             print(f"PDF {index}")
@@ -242,4 +247,22 @@ class Importer:
         directory.mkdir(
             parents=True,
             exist_ok=True,
+        )
+
+    def _copy_pdf(
+        self,
+        pdf_file: Path,
+        destination: Path,
+    ) -> None:
+        """
+        Copia un PDF a la carpeta de destino.
+
+        Args:
+            pdf_file: PDF seleccionado.
+            destination: Carpeta destino.
+        """
+
+        shutil.copy2(
+            pdf_file,
+            destination / pdf_file.name,
         )

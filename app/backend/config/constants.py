@@ -49,12 +49,10 @@ SALES_POINT_MAPPING = {
     "XAN - Comedor": COMEDOR,
     "XAN - Manolete": MANOLETE,
     "XAN - Starcafé": STARCAFE,
-    "XAN - Generales Bar y Comedor" : GENERALES,
+    "XAN - Generales Bar y Comedor": GENERALES,
 }
 
-VALID_PDF_DEPARTMENTS = frozenset(
-    SALES_POINT_MAPPING.keys()
-)
+VALID_PDF_DEPARTMENTS = frozenset(SALES_POINT_MAPPING.keys())
 
 # ==========================================================
 # EXCEL
@@ -65,18 +63,27 @@ EXCEL_SHEET_NAME = "extraccion"
 DAY_HEADER_ROW = 6
 FIRST_PRODUCT_ROW = 7
 
-PRODUCT_CODE_COLUMN = 1        # A
-PRODUCT_NAME_COLUMN = 2        # B
-CURRENT_STOCK_COLUMN = 3       # C
+PRODUCT_CODE_COLUMN = 1  # A
+PRODUCT_NAME_COLUMN = 2  # B
+CURRENT_STOCK_COLUMN = 3  # C
 
-FIRST_DAY_COLUMN = 7           # G (día 1)
+FIRST_DAY_COLUMN = 7  # G (día 1)
 
 # ==========================================================
 # PDF
 # ==========================================================
 
+PDF_IBS_CODE_LABEL = "Cód Ibs.:"
 PDF_DATE_LABEL = "Fecha:"
 PDF_DESTINATION_LABEL = "Dpto. Destino:"
+
+PDF_FILENAME_TEMPLATE = "DetalleMovimiento_XAN_{ibs_code}.pdf"
+
+# ==========================================================
+# REGISTRY
+# ==========================================================
+
+REGISTRY_FILENAME = "imported_deliveries.json"
 
 # ==========================================================
 # FILE EXTENSIONS

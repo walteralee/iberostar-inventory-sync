@@ -51,16 +51,18 @@ desktop.ini
 # ==========================================================
 
 *.log
-storage/logs/*
+storage/logs/**
 
+!storage/logs/
 !storage/logs/.gitkeep
 
 # ==========================================================
 # TEMP FILES
 # ==========================================================
 
-storage/temp/*
+storage/temp/**
 
+!storage/temp/
 !storage/temp/.gitkeep
 
 # ==========================================================
@@ -69,23 +71,50 @@ storage/temp/*
 
 storage/backup/**
 
+!storage/backup/
+!storage/backup/.gitkeep
+
 # ==========================================================
 # GENERATED OUTPUT
 # ==========================================================
 
 storage/output/**
 
+!storage/output/
+!storage/output/.gitkeep
+
 # ==========================================================
 # HOTEL DATA (PRIVATE)
 # ==========================================================
 
+# Ignorar todos los Excel generados
 storage/input/excels/**
+
+# Ignorar todos los PDF importados
 storage/input/pdfs/**
 
-# Mantener la estructura de carpetas
+# Mantener la estructura
 !storage/input/
 !storage/input/excels/
+!storage/input/excels/.gitkeep
 !storage/input/pdfs/
+!storage/input/pdfs/.gitkeep
+
+# ==========================================================
+# TEMPLATES (VERSIONADAS)
+# ==========================================================
+
+# Las plantillas forman parte del proyecto
+!storage/templates/
+!storage/templates/**
+
+# ==========================================================
+# REGISTRY (VERSIONADO)
+# ==========================================================
+
+# Mantener el registro vacío del sistema
+!storage/registry/
+!storage/registry/imported_deliveries.json
 
 # ==========================================================
 # DOCUMENTATION (Opcional)

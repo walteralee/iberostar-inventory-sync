@@ -16,6 +16,10 @@ import json
 from config.settings import REGISTRY_FILE
 from models.pdf_metadata import PDFMetadata
 
+from datetime import datetime
+
+from config.constants import MONTHS
+
 
 class Registry:
     """
@@ -57,6 +61,40 @@ class Registry:
 
         return ibs_code in self._data
 
+    def is_synchronized(
+        self,
+        ibs_code: str,
+    ) -> bool:
+        """
+        Comprueba si un albarán ya ha sido sincronizado.
+
+        Args:
+            ibs_code: Código IBS.
+
+        Returns:
+            True si ya fue sincronizado.
+        """
+
+        if not self.exists(ibs_code):
+            return False
+
+        return self._data[ibs_code]["synchronized"]
+
+    def mark_as_synchronized(
+        self,
+        ibs_code: str,
+    ) -> None:
+        """
+        Marca un albarán como sincronizado.
+
+        Args:
+            ibs_code: Código IBS.
+        """
+
+        if self.exists(ibs_code):
+
+            self._data[ibs_code]["synchronized"] = True
+
     def register(
         self,
         metadata: PDFMetadata,
@@ -70,10 +108,18 @@ class Registry:
             pdf_path: Ruta donde se ha almacenado el PDF.
         """
 
+        parsed_date = datetime.strptime(
+            metadata.delivery_date,
+            "%d/%m/%Y",
+        )
+
         self._data[metadata.ibs_code] = {
             "delivery_date": metadata.delivery_date,
+            "year": parsed_date.year,
+            "month": MONTHS[parsed_date.month - 1],
             "sales_point": metadata.sales_point,
             "pdf": str(pdf_path),
+            "synchronized": False,
         }
 
     def save(self) -> None:

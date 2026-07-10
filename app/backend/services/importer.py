@@ -45,6 +45,8 @@ class Importer:
 
         pdf_files = self._select_pdf_files()
 
+        imported_pdf_files: list[Path] = []
+
         if not pdf_files:
 
             print("\nNo se seleccionó ningún archivo PDF.\n")
@@ -74,11 +76,14 @@ class Importer:
 
                 metadata = self._extract_metadata(text)
 
-                destination = self._build_destination_directory(
+                pdf_path = self._build_destination_path(
                     metadata.delivery_date,
+                    pdf_file.name,
                 )
 
-                self._create_directory(destination)
+                self._create_directory(
+                    pdf_path,
+                )
 
                 if registry.exists(metadata.ibs_code):
 
@@ -88,12 +93,16 @@ class Importer:
 
                     self._copy_pdf(
                         pdf_file,
-                        destination,
+                        pdf_path,
                     )
 
                     registry.register(
                         metadata,
-                        destination / pdf_file.name,
+                        pdf_path,
+                    )
+
+                    imported_pdf_files.append(
+                        pdf_path,
                     )
 
                     status = "COPIADO"
@@ -105,7 +114,7 @@ class Importer:
                 print(f"Código IBS    : {metadata.ibs_code}")
                 print(f"Fecha         : {metadata.delivery_date}")
                 print(f"Punto de venta: {metadata.sales_point}")
-                print(f"Destino       : {destination}")
+                print(f"Destino       : {pdf_path}")
                 print(f"Estado        : {status}")
 
             except Exception as error:
@@ -119,7 +128,7 @@ class Importer:
 
         registry.save()
 
-        return pdf_files
+        return imported_pdf_files
 
     # ======================================================
     # PRIVATE
@@ -235,9 +244,10 @@ class Importer:
             sales_point=sales_point,
         )
 
-    def _build_destination_directory(
+    def _build_destination_path(
         self,
         delivery_date: str,
+        pdf_name: str,
     ) -> Path:
         """
         Construye la ruta donde debe almacenarse un PDF.
@@ -246,7 +256,7 @@ class Importer:
             delivery_date: Fecha del albarán.
 
         Returns:
-            Ruta de destino.
+            Ruta completa donde se almacenará el PDF.
         """
 
         parsed_date = datetime.strptime(
@@ -260,38 +270,38 @@ class Importer:
 
         day = str(parsed_date.day)
 
-        return INPUT_PDFS_DIR / year / month / day
+        return INPUT_PDFS_DIR / year / month / day / pdf_name
 
     def _create_directory(
         self,
-        directory: Path,
+        pdf_path: Path,
     ) -> None:
         """
         Crea una carpeta si no existe.
 
         Args:
-            directory: Carpeta a crear.
+            pdf_path: Ruta del PDF.
         """
 
-        directory.mkdir(
+        pdf_path.parent.mkdir(
             parents=True,
             exist_ok=True,
         )
 
     def _copy_pdf(
         self,
-        pdf_file: Path,
+        source: Path,
         destination: Path,
     ) -> None:
         """
         Copia un PDF a la carpeta de destino.
 
         Args:
-            pdf_file: PDF seleccionado.
-            destination: Carpeta destino.
+            source: PDF original.
+            destination: Ruta donde se copiará el PDF.
         """
 
         shutil.copy2(
-            pdf_file,
-            destination / pdf_file.name,
+            source,
+            destination,
         )

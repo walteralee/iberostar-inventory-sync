@@ -38,12 +38,15 @@ class PDFParser:
             self._merge_broken_lines(self._extract_text(pdf_path))
         )
 
+        ibs_code = self._extract_ibs_code(lines)
+
         sales_point = self._extract_sales_point(lines)
 
         if sales_point is None:
             return None
 
         return Delivery(
+            ibs_code=ibs_code,
             sales_point=sales_point,
             delivery_date=self._extract_date(lines),
             products=self._extract_products(lines),
@@ -185,6 +188,27 @@ class PDFParser:
                 return datetime.strptime(value, "%d/%m/%Y").date()
 
         raise ValueError("Fecha no encontrada.")
+
+    def _extract_ibs_code(
+        self,
+        lines: list[str],
+    ) -> int:
+        """
+        Extrae el código IBS del albarán.
+        """
+
+        for line in lines:
+
+            if line.startswith("Cód Ibs.:"):
+
+                value = line.replace(
+                    "Cód Ibs.:",
+                    "",
+                ).strip()
+
+                return int(value)
+
+        raise ValueError("Código IBS no encontrado.")
 
     def _extract_sales_point(self, lines: list[str]) -> SalesPoint | None:
         """

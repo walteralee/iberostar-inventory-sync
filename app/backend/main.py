@@ -26,7 +26,10 @@ def main() -> None:
         return
 
     synchronizer = Synchronizer()
-    synchronizer.run()
+
+    synchronizer.run(
+        pdf_files,
+    )
 
 
 if __name__ == "__main__":

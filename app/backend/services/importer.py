@@ -24,6 +24,7 @@ from config.constants import (
     PDF_DATE_LABEL,
     PDF_DESTINATION_LABEL,
     PDF_IBS_CODE_LABEL,
+    PDF_FILENAME_TEMPLATE,
 )
 from config.settings import INPUT_PDFS_DIR
 from models.pdf_metadata import PDFMetadata
@@ -76,9 +77,13 @@ class Importer:
 
                 metadata = self._extract_metadata(text)
 
+                pdf_name = self._build_pdf_filename(
+                    metadata.ibs_code,
+                )
+
                 pdf_path = self._build_destination_path(
                     metadata.delivery_date,
-                    pdf_file.name,
+                    pdf_name,
                 )
 
                 self._create_directory(
@@ -242,6 +247,24 @@ class Importer:
             ibs_code=ibs_code,
             delivery_date=delivery_date,
             sales_point=sales_point,
+        )
+
+    def _build_pdf_filename(
+        self,
+        ibs_code: str,
+    ) -> str:
+        """
+        Construye el nombre estándar de un PDF.
+
+        Args:
+            ibs_code: Código IBS.
+
+        Returns:
+            Nombre del archivo PDF.
+        """
+
+        return PDF_FILENAME_TEMPLATE.format(
+            ibs_code=ibs_code,
         )
 
     def _build_destination_path(

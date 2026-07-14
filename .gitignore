@@ -126,3 +126,6 @@ storage/registry/imported_deliveries.json
 # ==========================================================
 
 # *.pdf
+
+# Archivos temporales de Microsoft Excel
+~$*

@@ -255,19 +255,31 @@ class PDFParser:
             if not tokens[0].isdigit():
                 continue
 
-            code = int(tokens[0])
+            try:
 
-            quantity = self._extract_quantity(
-                tokens,
-                line,
-                line_number,
-            )
+                (
+                    code,
+                    name,
+                    format,
+                    price,
+                    quantity,
+                ) = self._extract_product_data(
+                    tokens,
+                    line,
+                    line_number,
+                )
 
-            if quantity is None:
+            except ValueError as error:
+
+                print(error)
+
                 continue
 
             product = Product(
                 code=code,
+                name=name,
+                format=format,
+                price=price,
                 quantity=quantity,
             )
 
@@ -276,6 +288,9 @@ class PDFParser:
             print(
                 f"{len(products):03d} | "
                 f"Código: {product.code:<8} | "
+                f"Nombre: {product.name:<40} | "
+                f"Formato: {product.format:<10} | "
+                f"Precio: {product.price:<8} | "
                 f"Cantidad: {product.quantity}"
             )
 
@@ -285,22 +300,14 @@ class PDFParser:
 
         return products
 
-    def _extract_quantity(
+    def _extract_product_data(
         self,
         tokens: list[str],
         line: str,
         line_number: int,
-    ) -> float | None:
+    ) -> tuple[int, str, str, float, float]:
         """
-        Extrae la cantidad de un producto.
-
-        Soporta tanto el formato normal:
-
-            Cantidad Cant.Sol Vale Precio Total
-
-        como el formato reducido:
-
-            Cantidad Precio Total
+        Extrae toda la información de un producto.
         """
 
         decimal_pattern = re.compile(r"^\d+,\d+$")
@@ -311,34 +318,49 @@ class PDFParser:
         ]
 
         if len(decimal_indexes) < 2:
-
-            print(f"[ERROR] Línea {line_number}: " f"No se encontraron Precio y Total.")
-
-            print(f"        {line}")
-
-            return None
+            raise ValueError(
+                f"[ERROR] Línea {line_number}: No se encontraron Precio y Total.\n        {line}"
+            )
 
         price_index = decimal_indexes[-2]
 
-        integers = []
-
         index = price_index - 1
 
+        # Buscar el formato (primera palabra hacia atrás)
         while index >= 0 and integer_pattern.match(tokens[index]):
-
-            integers.insert(0, tokens[index])
-
             index -= 1
 
-        if not integers:
+        if index < 1:
+            raise ValueError(
+                f"[ERROR] Línea {line_number}: No se encontró el formato.\n        {line}"
+            )
 
-            print(f"[ERROR] Línea {line_number}: " f"No se encontró la cantidad.")
+        format_index = index
+        product_format = tokens[format_index]
 
-            print(f"        {line}")
+        # Buscar la cantidad (primer número a la derecha del formato)
+        quantity_index = format_index + 1
 
-            return None
+        if (
+            quantity_index >= len(tokens)
+            or not integer_pattern.match(tokens[quantity_index])
+        ):
+            raise ValueError(
+                f"[ERROR] Línea {line_number}: No se encontró la cantidad.\n        {line}"
+            )
 
-        if len(integers) >= 3:
-            return float(integers[-3])
+        quantity = float(tokens[quantity_index])
 
-        return float(integers[-1])
+        name = " ".join(tokens[1:format_index])
+
+        price = float(tokens[price_index].replace(",", "."))
+
+        code = int(tokens[0])
+
+        return (
+            code,
+            name,
+            product_format,
+            price,
+            quantity,
+        )

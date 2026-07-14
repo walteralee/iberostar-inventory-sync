@@ -20,6 +20,8 @@ from excel.reader import ExcelReader
 from excel.finder import ExcelFinder
 from excel.writer import ExcelWriter
 
+from excel.product_manager import ProductManager
+
 
 class Synchronizer:
     """
@@ -35,6 +37,8 @@ class Synchronizer:
         self.excel_writer = ExcelWriter()
 
         self.template_manager = ExcelTemplateManager()
+
+        self.product_manager = ProductManager()
 
     def run(
         self,
@@ -101,22 +105,14 @@ class Synchronizer:
                 )
 
                 written = 0
-                missing = 0
 
                 for product in delivery.products:
 
-                    row = self.excel_finder.find_product(
-                        product_index,
-                        product.code,
+                    row = self.product_manager.find_or_create(
+                        worksheet=worksheet,
+                        product_index=product_index,
+                        product=product,
                     )
-
-                    if row is None:
-
-                        print(f"[NO ENCONTRADO] Código: {product.code}")
-
-                        missing += 1
-
-                        continue
 
                     self.excel_writer.write(
                         worksheet=worksheet,
@@ -137,7 +133,6 @@ class Synchronizer:
                 print(f"Excel               : {excel_path.name}")
                 print(f"Productos en PDF    : {len(delivery.products)}")
                 print(f"Productos escritos  : {written}")
-                print(f"No encontrados      : {missing}")
                 print("=" * 100)
 
             except Exception as error:

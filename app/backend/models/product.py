@@ -22,4 +22,7 @@ class Product:
     """
 
     code: int
+    name: str
+    format: str
+    price: float
     quantity: float

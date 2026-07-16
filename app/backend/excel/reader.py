@@ -43,14 +43,10 @@ class ExcelReader:
         if not excel_path.exists():
             raise FileNotFoundError(excel_path)
 
-        workbook = load_workbook(
-            filename=excel_path
-        )
+        workbook = load_workbook(filename=excel_path)
 
         if EXCEL_SHEET_NAME not in workbook.sheetnames:
-            raise ValueError(
-                f"No existe la hoja '{EXCEL_SHEET_NAME}'."
-            )
+            raise ValueError(f"No existe la hoja '{EXCEL_SHEET_NAME}'.")
 
         worksheet = workbook[EXCEL_SHEET_NAME]
 

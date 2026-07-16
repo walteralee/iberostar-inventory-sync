@@ -38,7 +38,22 @@ class ExcelWriter:
 
         current_value = cell.value
 
-        if current_value in (None, ""):
+        if current_value in (
+            None,
+            "",
+        ):
             current_value = 0
 
+        print(f"{'':18}│ " f"Fila destino            : {row}")
+
+        print(f"{'':18}│ " f"Columna destino         : {column}")
+
+        print(f"{'':18}│ " f"Valor anterior          : {current_value}")
+
+        print(f"{'':18}│ " f"Cantidad añadida        : {quantity}")
+
         cell.value = current_value + quantity
+
+        print(f"{'':18}│ " f"Valor final             : {cell.value}")
+
+        print(f"{'':18}│ " f"Resultado               : CANTIDAD ACUMULADA")

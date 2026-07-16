@@ -27,36 +27,48 @@ class ExcelFinder:
     Localizador de información dentro del Excel.
     """
 
-    def build_product_index(self, worksheet: Worksheet) -> dict[int, int]:
+    def build_product_index(
+        self,
+        worksheet: Worksheet,
+    ) -> dict[int, int]:
         """
         Construye un índice de productos.
-
-        Args:
-            worksheet: Hoja del Excel.
-
-        Returns:
-            Diccionario:
-                codigo_articulo -> fila
         """
+
+        print()
+        print("-" * 100)
+        print("CONSTRUCCIÓN DEL ÍNDICE DE PRODUCTOS")
+        print("-" * 100)
 
         index: dict[int, int] = {}
 
-        for row in range(FIRST_PRODUCT_ROW, worksheet.max_row + 1):
+        for row in range(
+            FIRST_PRODUCT_ROW,
+            worksheet.max_row + 1,
+        ):
 
             value = worksheet.cell(
                 row=row,
-                column=PRODUCT_CODE_COLUMN
+                column=PRODUCT_CODE_COLUMN,
             ).value
 
             if value is None:
                 continue
 
             try:
+
                 code = int(value)
+
             except (TypeError, ValueError):
                 continue
 
             index[code] = row
+
+        print(f"Productos indexados : {len(index)}")
+        print(f"Primera fila        : {FIRST_PRODUCT_ROW}")
+        print(f"Última fila leída   : {worksheet.max_row}")
+        print("Estado              : ÍNDICE CONSTRUIDO")
+        print("-" * 100)
 
         return index
 
@@ -67,29 +79,34 @@ class ExcelFinder:
     ) -> int | None:
         """
         Devuelve la fila correspondiente a un código de artículo.
-
-        Args:
-            product_index: Índice de productos.
-            product_code: Código del artículo.
-
-        Returns:
-            Número de fila o None si no existe.
         """
 
-        return product_index.get(product_code)
+        return product_index.get(
+            product_code,
+        )
 
-    def find_day_column(self, day: int) -> int:
+    def find_day_column(
+        self,
+        day: int,
+    ) -> int:
         """
         Calcula la columna correspondiente al día del mes.
-
-        Args:
-            day: Día del mes.
-
-        Returns:
-            Número de columna.
         """
+
+        print()
+        print("-" * 100)
+        print("LOCALIZACIÓN DE LA COLUMNA DEL DÍA")
+        print("-" * 100)
 
         if not 1 <= day <= 31:
             raise ValueError(f"Día inválido: {day}")
 
-        return FIRST_DAY_COLUMN + (day - 1)
+        column = FIRST_DAY_COLUMN + (day - 1)
+
+        print(f"Día del albarán : {day}")
+        print(f"Fila cabecera   : {DAY_HEADER_ROW}")
+        print(f"Columna Excel   : {column}")
+        print("Estado          : COLUMNA LOCALIZADA")
+        print("-" * 100)
+
+        return column

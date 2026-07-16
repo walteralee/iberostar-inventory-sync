@@ -10,15 +10,13 @@ Descripción:
     importados.
 """
 
+from datetime import datetime
 from pathlib import Path
 import json
 
+from config.constants import MONTHS
 from config.settings import REGISTRY_FILE
 from models.pdf_metadata import PDFMetadata
-
-from datetime import datetime
-
-from config.constants import MONTHS
 
 
 class Registry:
@@ -75,7 +73,9 @@ class Registry:
             True si ya fue sincronizado.
         """
 
-        if not self.exists(ibs_code):
+        if not self.exists(
+            ibs_code,
+        ):
             return False
 
         return self._data[ibs_code]["synchronized"]
@@ -91,9 +91,33 @@ class Registry:
             ibs_code: Código IBS.
         """
 
-        if self.exists(ibs_code):
+        print()
+        print("-" * 100)
+        print("ACTUALIZACIÓN DEL ESTADO DE SINCRONIZACIÓN")
+        print("-" * 100)
+        print(f"Código IBS    : {ibs_code}")
+        print("Proceso       : Marcando albarán como sincronizado...")
+
+        if self.exists(
+            ibs_code,
+        ):
 
             self._data[ibs_code]["synchronized"] = True
+
+            print("IBS registrado: SÍ")
+            print("Estado anterior: PENDIENTE")
+            print("Estado actual  : SINCRONIZADO")
+
+        else:
+
+            print("IBS registrado: NO")
+            print("Estado        : NO MODIFICADO")
+            print(
+                "Resultado     : No se puede marcar como sincronizado "
+                "porque el IBS no existe."
+            )
+
+        print("-" * 100)
 
     def register(
         self,
@@ -122,10 +146,33 @@ class Registry:
             "synchronized": False,
         }
 
+        print()
+        print("-" * 100)
+        print("REGISTRO DEL ALBARÁN")
+        print("-" * 100)
+        print(f"Código IBS     : {metadata.ibs_code}")
+        print(f"Fecha          : {metadata.delivery_date}")
+        print(f"Año            : {parsed_date.year}")
+        print(f"Mes            : {MONTHS[parsed_date.month - 1]}")
+        print(f"Punto de venta : {metadata.sales_point}")
+        print(f"Archivo        : {pdf_path.name}")
+        print("Sincronización : PENDIENTE")
+        print("Estado         : AÑADIDO AL REGISTRY")
+        print("-" * 100)
+
     def save(self) -> None:
         """
         Guarda el registro en disco.
         """
+
+        print()
+        print("-" * 100)
+        print("ESCRITURA DEL REGISTRY")
+        print("-" * 100)
+        print(f"Archivo        : {REGISTRY_FILE.name}")
+        print(f"Ruta           : {REGISTRY_FILE}")
+        print(f"Registros      : {len(self._data)}")
+        print("Proceso        : Guardando contenido...")
 
         with REGISTRY_FILE.open(
             "w",
@@ -138,6 +185,9 @@ class Registry:
                 indent=4,
                 ensure_ascii=False,
             )
+
+        print("Estado         : GUARDADO CORRECTAMENTE")
+        print("-" * 100)
 
     # ======================================================
     # PRIVATE
@@ -153,7 +203,18 @@ class Registry:
             Diccionario con el contenido del registro.
         """
 
+        print()
+        print("=" * 100)
+        print("CARGA DEL REGISTRY")
+        print("=" * 100)
+        print(f"Archivo        : {REGISTRY_FILE.name}")
+        print(f"Ruta           : {REGISTRY_FILE}")
+        print("Proceso        : Comprobando archivo del Registry...")
+
         if not REGISTRY_FILE.exists():
+
+            print("Archivo        : NO EXISTE")
+            print("Proceso        : Creando nuevo Registry...")
 
             REGISTRY_FILE.parent.mkdir(
                 parents=True,
@@ -165,7 +226,14 @@ class Registry:
                 encoding="utf-8",
             )
 
+            print("Estado         : REGISTRY CREADO")
+            print("Registros      : 0")
+            print("=" * 100)
+
             return {}
+
+        print("Archivo        : ENCONTRADO")
+        print("Proceso        : Leyendo registros...")
 
         with REGISTRY_FILE.open(
             "r",
@@ -174,8 +242,27 @@ class Registry:
 
             try:
 
-                return json.load(file)
+                data = json.load(
+                    file,
+                )
+
+                print("Lectura        : COMPLETADA")
+                print(f"Registros      : {len(data)}")
+                print("Estado         : REGISTRY CARGADO CORRECTAMENTE")
+                print("=" * 100)
+
+                return data
 
             except json.JSONDecodeError:
+
+                print()
+                print("!" * 100)
+                print("ERROR DE LECTURA DEL REGISTRY")
+                print("!" * 100)
+                print(f"Archivo        : {REGISTRY_FILE.name}")
+                print("Motivo         : El contenido JSON no es válido.")
+                print("Resultado      : Se utilizará un Registry vacío.")
+                print("Registros      : 0")
+                print("!" * 100)
 
                 return {}

@@ -12,12 +12,9 @@ Descripción:
 from datetime import datetime
 from pathlib import Path
 from tkinter import Tk, filedialog
-from services.registry import Registry
-
 import shutil
 
 import pdfplumber
-
 
 from config.constants import (
     MONTHS,
@@ -28,6 +25,7 @@ from config.constants import (
 )
 from config.settings import INPUT_PDFS_DIR
 from models.pdf_metadata import PDFMetadata
+from services.registry import Registry
 
 
 class Importer:
@@ -40,9 +38,21 @@ class Importer:
         Ejecuta el proceso de importación de nuevos PDF.
 
         Returns:
-            Lista de archivos PDF seleccionados.
+            Lista de archivos PDF importados correctamente.
         """
+
         registry = Registry()
+
+        # ==================================================
+        # SELECCIÓN DE ARCHIVOS
+        # ==================================================
+
+        print()
+        print("=" * 100)
+        print("1. SELECCIÓN DE ALBARANES PDF")
+        print("=" * 100)
+        print("Abriendo el explorador de archivos...")
+        print("=" * 100)
 
         pdf_files = self._select_pdf_files()
 
@@ -50,32 +60,92 @@ class Importer:
 
         if not pdf_files:
 
-            print("\nNo se seleccionó ningún archivo PDF.\n")
+            print()
+            print("!" * 100)
+            print("SELECCIÓN CANCELADA")
+            print("!" * 100)
+            print("No se seleccionó ningún archivo PDF.")
+            print("No hay archivos para importar ni sincronizar.")
+            print("!" * 100)
 
             return []
 
-        print("\n" + "=" * 100)
-        print("PDF SELECCIONADOS")
-        print("=" * 100)
-
-        for index, pdf in enumerate(pdf_files, start=1):
-
-            print(f"{index:03d} | {pdf}")
-
-        print("=" * 100)
-
         # ==================================================
-        # Extraer y mostrar la información básica de cada
-        # PDF seleccionado.
+        # LISTA DE PDF ENCONTRADOS
         # ==================================================
 
-        for index, pdf_file in enumerate(pdf_files, start=1):
+        print()
+        print("=" * 100)
+        print("2. LISTA DE PDF ENCONTRADOS")
+        print("=" * 100)
+
+        for index, pdf_file in enumerate(
+            pdf_files,
+            start=1,
+        ):
+            print(f"{index:03d} | " f"{pdf_file.name}")
+
+        print("-" * 100)
+        print(f"Total de PDF seleccionados: {len(pdf_files)}")
+        print("=" * 100)
+
+        # Contadores exclusivamente informativos.
+        imported_count = 0
+        existing_count = 0
+        error_count = 0
+
+        # ==================================================
+        # PROCESAMIENTO DE CADA PDF
+        # ==================================================
+
+        print()
+        print("=" * 100)
+        print("3. LECTURA DE METADATOS Y COMPROBACIÓN DEL REGISTRY")
+        print("=" * 100)
+
+        for index, pdf_file in enumerate(
+            pdf_files,
+            start=1,
+        ):
 
             try:
 
-                text = self._extract_text(pdf_file)
+                print()
+                print("-" * 100)
+                print(f"PDF {index:03d} DE {len(pdf_files):03d} " f"| {pdf_file.name}")
+                print("-" * 100)
 
-                metadata = self._extract_metadata(text)
+                # ==========================================
+                # Lectura del PDF
+                # ==========================================
+
+                print("Proceso       : Leyendo contenido del PDF...")
+
+                text = self._extract_text(
+                    pdf_file,
+                )
+
+                print("Lectura       : COMPLETADA")
+
+                # ==========================================
+                # Extracción de metadatos
+                # ==========================================
+
+                print("Proceso       : Extrayendo metadatos...")
+
+                metadata = self._extract_metadata(
+                    text,
+                )
+
+                print("Metadatos     : ENCONTRADOS")
+                print(f"Archivo       : {pdf_file.name}")
+                print(f"Código IBS    : {metadata.ibs_code}")
+                print(f"Fecha         : {metadata.delivery_date}")
+                print(f"Punto de venta: {metadata.sales_point}")
+
+                # ==========================================
+                # Construcción del destino
+                # ==========================================
 
                 pdf_name = self._build_pdf_filename(
                     metadata.ibs_code,
@@ -90,16 +160,49 @@ class Importer:
                     pdf_path,
                 )
 
-                if registry.exists(metadata.ibs_code):
+                print(f"Nombre final  : {pdf_name}")
+                print(f"Carpeta       : {pdf_path.parent}")
 
-                    status = "YA EXISTE"
+                # ==========================================
+                # Comprobación del Registry
+                # ==========================================
+
+                print("Registry      : Comprobando código IBS...")
+
+                if registry.exists(
+                    metadata.ibs_code,
+                ):
+
+                    existing_count += 1
+
+                    print(f"IBS registrado: SÍ")
+                    print(f"Estado        : IGNORADO")
+                    print("Resultado     : El PDF ya fue importado " "anteriormente.")
 
                 else:
+
+                    print(f"IBS registrado: NO")
+                    print("Estado        : NUEVO")
+
+                    # ======================================
+                    # Copia del PDF
+                    # ======================================
+
+                    print("Proceso       : Copiando y renombrando PDF...")
 
                     self._copy_pdf(
                         pdf_file,
                         pdf_path,
                     )
+
+                    print("Copia         : COMPLETADA")
+                    print(f"Destino       : {pdf_path}")
+
+                    # ======================================
+                    # Registro del PDF
+                    # ======================================
+
+                    print("Proceso       : Registrando PDF...")
 
                     registry.register(
                         metadata,
@@ -110,28 +213,72 @@ class Importer:
                         pdf_path,
                     )
 
-                    status = "COPIADO"
+                    imported_count += 1
 
-                print("\n" + "=" * 100)
-                print(f"PDF {index}")
-                print("=" * 100)
-                print(f"Archivo       : {pdf_file.name}")
-                print(f"Código IBS    : {metadata.ibs_code}")
-                print(f"Fecha         : {metadata.delivery_date}")
-                print(f"Punto de venta: {metadata.sales_point}")
-                print(f"Destino       : {pdf_path}")
-                print(f"Estado        : {status}")
+                    print("Registry      : REGISTRADO")
+                    print("Sincronización: PENDIENTE")
+                    print("Resultado     : IMPORTADO CORRECTAMENTE")
+
+                print("-" * 100)
 
             except Exception as error:
 
-                print("\n" + "=" * 100)
-                print(f"PDF {index}")
-                print("=" * 100)
+                error_count += 1
+
+                print()
+                print("!" * 100)
+                print(f"ERROR DURANTE LA IMPORTACIÓN " f"DEL PDF {index:03d}")
+                print("!" * 100)
                 print(f"Archivo       : {pdf_file.name}")
-                print(f"Estado        : ERROR")
+                print("Estado        : ERROR")
                 print(f"Motivo        : {error}")
+                print("Resultado     : PDF NO IMPORTADO")
+                print("!" * 100)
+
+        # ==================================================
+        # GUARDADO DEL REGISTRY
+        # ==================================================
+
+        print()
+        print("=" * 100)
+        print("4. GUARDADO DEL REGISTRY")
+        print("=" * 100)
+        print("Proceso       : Guardando cambios del Registry...")
 
         registry.save()
+
+        print("Estado        : GUARDADO CORRECTAMENTE")
+        print("=" * 100)
+
+        # ==================================================
+        # RESUMEN DE IMPORTACIÓN
+        # ==================================================
+
+        print()
+        print("=" * 100)
+        print("5. RESUMEN DE IMPORTACIÓN")
+        print("=" * 100)
+        print(f"PDF seleccionados : {len(pdf_files)}")
+        print(f"PDF nuevos        : {imported_count}")
+        print(f"PDF ya registrados: {existing_count}")
+        print(f"PDF con errores   : {error_count}")
+        print("-" * 100)
+
+        if imported_pdf_files:
+
+            print("PDF enviados al sincronizador:")
+
+            for index, pdf_path in enumerate(
+                imported_pdf_files,
+                start=1,
+            ):
+                print(f"{index:03d} | " f"{pdf_path.name}")
+
+        else:
+
+            print("PDF enviados al sincronizador: NINGUNO")
+
+        print("=" * 100)
 
         return imported_pdf_files
 
@@ -149,12 +296,18 @@ class Importer:
 
         root = Tk()
         root.withdraw()
-        root.attributes("-topmost", True)
+        root.attributes(
+            "-topmost",
+            True,
+        )
 
         files = filedialog.askopenfilenames(
             title="Seleccionar albaranes PDF",
             filetypes=[
-                ("Archivos PDF", "*.pdf"),
+                (
+                    "Archivos PDF",
+                    "*.pdf",
+                ),
             ],
         )
 
@@ -178,16 +331,22 @@ class Importer:
 
         pages = []
 
-        with pdfplumber.open(pdf_file) as pdf:
+        with pdfplumber.open(
+            pdf_file,
+        ) as pdf:
 
             for page in pdf.pages:
 
                 text = page.extract_text()
 
                 if text:
-                    pages.append(text)
+                    pages.append(
+                        text,
+                    )
 
-        return "\n".join(pages)
+        return "\n".join(
+            pages,
+        )
 
     def _extract_metadata(
         self,
@@ -206,21 +365,27 @@ class Importer:
 
             line = line.strip()
 
-            if line.startswith(PDF_IBS_CODE_LABEL):
+            if line.startswith(
+                PDF_IBS_CODE_LABEL,
+            ):
 
                 ibs_code = line.replace(
                     PDF_IBS_CODE_LABEL,
                     "",
                 ).strip()
 
-            elif line.startswith(PDF_DATE_LABEL):
+            elif line.startswith(
+                PDF_DATE_LABEL,
+            ):
 
                 delivery_date = line.replace(
                     PDF_DATE_LABEL,
                     "",
                 ).strip()
 
-            elif line.startswith(PDF_DESTINATION_LABEL):
+            elif line.startswith(
+                PDF_DESTINATION_LABEL,
+            ):
 
                 sales_point = line.replace(
                     PDF_DESTINATION_LABEL,
@@ -235,13 +400,19 @@ class Importer:
                 break
 
         if ibs_code is None:
-            raise ValueError("Código IBS no encontrado.")
+            raise ValueError(
+                "Código IBS no encontrado.",
+            )
 
         if delivery_date is None:
-            raise ValueError("Fecha no encontrada.")
+            raise ValueError(
+                "Fecha no encontrada.",
+            )
 
         if sales_point is None:
-            raise ValueError("Punto de venta no encontrado.")
+            raise ValueError(
+                "Punto de venta no encontrado.",
+            )
 
         return PDFMetadata(
             ibs_code=ibs_code,
@@ -277,6 +448,7 @@ class Importer:
 
         Args:
             delivery_date: Fecha del albarán.
+            pdf_name: Nombre final del PDF.
 
         Returns:
             Ruta completa donde se almacenará el PDF.
@@ -287,11 +459,15 @@ class Importer:
             "%d/%m/%Y",
         )
 
-        year = str(parsed_date.year)
+        year = str(
+            parsed_date.year,
+        )
 
         month = MONTHS[parsed_date.month - 1]
 
-        day = str(parsed_date.day)
+        day = str(
+            parsed_date.day,
+        )
 
         return INPUT_PDFS_DIR / year / month / day / pdf_name
 

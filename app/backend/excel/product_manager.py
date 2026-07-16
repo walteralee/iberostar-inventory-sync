@@ -29,60 +29,6 @@ class ProductManager:
     dentro del Excel.
     """
 
-    def find_or_create(
-        self,
-        worksheet: Worksheet,
-        product_index: dict[int, int],
-        product: Product,
-    ) -> int:
-        """
-        Devuelve la fila del producto.
-
-        Si el producto ya existe, devuelve su fila sin modificar
-        ningún dato del producto.
-
-        Si no existe, crea una nueva fila antes de la fila de totales.
-        """
-
-        row = product_index.get(product.code)
-
-        # El producto ya existe.
-        # No se modifica nombre, formato, precio ni ninguna otra información.
-        if row is not None:
-            return row
-
-        row = self._insert_product_row(
-            worksheet,
-        )
-
-        self._copy_row_format(
-            worksheet,
-            row,
-        )
-
-        self._fill_product_data(
-            worksheet,
-            row,
-            product,
-        )
-
-        self._copy_product_formulas(
-            worksheet,
-            row,
-        )
-
-        self._update_total_formulas(
-            worksheet,
-            row,
-        )
-
-        # Registrar inmediatamente el nuevo producto en el índice.
-        product_index[product.code] = row
-
-        print(f"[PRODUCTO CREADO] " f"Código: {product.code} | " f"Fila: {row}")
-
-        return row
-
     def _insert_product_row(
         self,
         worksheet: Worksheet,
@@ -90,17 +36,49 @@ class ProductManager:
         """
         Inserta una nueva fila justo antes de la fila de totales.
 
-        Returns:
-            Número de la fila creada.
+        También desplaza correctamente las celdas combinadas
+        pertenecientes a la fila de totales.
         """
 
         total_row = self._find_total_row(
             worksheet,
         )
 
+        merged_ranges_to_move: list[tuple[int, int, int, int]] = []
+
+        for merged_range in list(worksheet.merged_cells.ranges):
+
+            if merged_range.min_row <= total_row <= merged_range.max_row:
+                merged_ranges_to_move.append(
+                    (
+                        merged_range.min_row,
+                        merged_range.min_col,
+                        merged_range.max_row,
+                        merged_range.max_col,
+                    )
+                )
+
+                worksheet.unmerge_cells(
+                    str(merged_range),
+                )
+
         worksheet.insert_rows(
             total_row,
         )
+
+        for (
+            min_row,
+            min_column,
+            max_row,
+            max_column,
+        ) in merged_ranges_to_move:
+
+            worksheet.merge_cells(
+                start_row=min_row + 1,
+                start_column=min_column,
+                end_row=max_row + 1,
+                end_column=max_column,
+            )
 
         return total_row
 
@@ -109,11 +87,8 @@ class ProductManager:
         worksheet: Worksheet,
     ) -> int:
         """
-        Localiza la primera fila de fórmulas situada después
+        Localiza la fila de totales situada después
         de los productos.
-
-        Si no encuentra una fila de totales, utiliza la fila
-        posterior al último producto.
         """
 
         last_product_row = FIRST_PRODUCT_ROW - 1
@@ -136,7 +111,10 @@ class ProductManager:
             except (TypeError, ValueError):
                 pass
 
-            if row > last_product_row and self._row_contains_formulas(worksheet, row):
+            if row > last_product_row and self._row_contains_formulas(
+                worksheet,
+                row,
+            ):
                 return row
 
         return last_product_row + 1
@@ -195,7 +173,100 @@ class ProductManager:
                 column=column,
             )
 
-            target._style = copy(source._style)
+            target._style = copy(
+                source._style,
+            )
+
+            if source.has_style:
+                target.number_format = source.number_format
+
+    def find_or_create(
+        self,
+        worksheet: Worksheet,
+        product_index: dict[int, int],
+        product: Product,
+    ) -> tuple[int, bool]:
+        """
+        Devuelve la fila del producto y si ha sido creado.
+
+        Returns:
+            tuple[int, bool]:
+                - Número de fila.
+                - True si el producto fue creado.
+                - False si el producto ya existía.
+        """
+
+        row = product_index.get(
+            product.code,
+        )
+
+        # ==================================================
+        # PRODUCTO EXISTENTE
+        # ==================================================
+
+        if row is not None:
+
+            print(
+                f"Código: {product.code:<8} | "
+                f"EXISTENTE | "
+                f"Fila: {row:<5} | "
+                f"No se modifican sus datos"
+            )
+
+            return row, False
+
+        # ==================================================
+        # PRODUCTO NUEVO
+        # ==================================================
+
+        print(f"Código: {product.code:<8} | " f"NUEVO     | " f"Creando producto...")
+
+        row = self._insert_product_row(
+            worksheet,
+        )
+
+        print(f"{'':18}│ " f"Fila insertada          : {row}")
+
+        self._copy_row_format(
+            worksheet,
+            row,
+        )
+
+        print(f"{'':18}│ " f"Formato copiado         : SÍ")
+
+        self._fill_product_data(
+            worksheet,
+            row,
+            product,
+        )
+
+        print(f"{'':18}│ " f"Código                  : {product.code}")
+        print(f"{'':18}│ " f"Nombre                  : {product.name}")
+        print(f"{'':18}│ " f"Stock actual            : 0")
+        print(f"{'':18}│ " f"Formato                 : {product.format}")
+        print(f"{'':18}│ " f"Precio                  : {product.price}")
+
+        self._copy_product_formulas(
+            worksheet,
+            row,
+        )
+
+        print(f"{'':18}│ " f"Fórmulas adaptadas      : SÍ")
+
+        self._update_total_formulas(
+            worksheet,
+            row,
+        )
+
+        print(f"{'':18}│ " f"Totales actualizados    : SÍ")
+
+        product_index[product.code] = row
+
+        print(f"{'':18}│ " f"Índice actualizado      : SÍ")
+
+        print(f"{'':18}└─ " f"Resultado               : PRODUCTO CREADO")
+
+        return row, True
 
     def _fill_product_data(
         self,
@@ -260,7 +331,6 @@ class ProductManager:
             )
 
             if isinstance(source.value, str) and source.value.startswith("="):
-
                 target.value = Translator(
                     source.value,
                     origin=source.coordinate,

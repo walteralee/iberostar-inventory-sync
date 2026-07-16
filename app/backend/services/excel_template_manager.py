@@ -46,22 +46,41 @@ class ExcelTemplateManager:
             Carpeta donde se encuentran los Excel del mes.
         """
 
-        month_name = self._get_month_name(month)
+        month_name = self._get_month_name(
+            month,
+        )
 
         month_directory = INPUT_EXCELS_DIR / str(year) / month_name
+
+        print()
+        print("=" * 100)
+        print("PREPARACIÓN DE LOS EXCEL MENSUALES")
+        print("=" * 100)
+        print(f"Año              : {year}")
+        print(f"Mes              : {month_name.title()}")
+        print(f"Carpeta mensual  : {month_directory}")
+        print("-" * 100)
+        print("Proceso          : Preparando carpeta mensual...")
 
         month_directory.mkdir(
             parents=True,
             exist_ok=True,
         )
 
-        for template in EXCEL_TEMPLATES:
+        print("Carpeta mensual  : PREPARADA CORRECTAMENTE")
+        print("-" * 100)
+        print("COMPROBACIÓN DE LOS EXCEL")
+        print("-" * 100)
+
+        for index, template in enumerate(
+            EXCEL_TEMPLATES,
+            start=1,
+        ):
 
             source = TEMPLATES_DIR / f"{template}{EXCEL_EXTENSION}"
 
-            destination = (
-                month_directory
-                / f"{template}_{month_name.title()}_{year}{EXCEL_EXTENSION}"
+            destination = month_directory / (
+                f"{template}_" f"{month_name.title()}_" f"{year}" f"{EXCEL_EXTENSION}"
             )
 
             if not destination.exists():
@@ -70,6 +89,22 @@ class ExcelTemplateManager:
                     source,
                     destination,
                 )
+
+                print(
+                    f"{index:03d} | "
+                    f"{destination.name:<50} | "
+                    f"CREADO DESDE PLANTILLA"
+                )
+
+            else:
+
+                print(f"{index:03d} | " f"{destination.name:<50} | " f"YA EXISTÍA")
+
+        print("-" * 100)
+        print(f"Excel comprobados: {len(EXCEL_TEMPLATES)}")
+        print(f"Carpeta preparada: {month_directory}")
+        print("Estado           : EXCEL MENSUALES DISPONIBLES")
+        print("=" * 100)
 
         return month_directory
 
@@ -92,14 +127,38 @@ class ExcelTemplateManager:
             Ruta completa del archivo Excel.
         """
 
-        month_name = self._get_month_name(month)
+        month_name = self._get_month_name(
+            month,
+        )
 
         return (
             INPUT_EXCELS_DIR
             / str(year)
             / month_name
-            / f"{sales_point}_{month_name.title()}_{year}{EXCEL_EXTENSION}"
+            / (
+                f"{sales_point}_"
+                f"{month_name.title()}_"
+                f"{year}"
+                f"{EXCEL_EXTENSION}"
+            )
         )
+
+    def get_template_path(
+        self,
+        sales_point: str,
+    ) -> Path:
+        """
+        Devuelve la ruta de la plantilla original correspondiente
+        a un punto de venta.
+
+        Args:
+            sales_point: Nombre del punto de venta.
+
+        Returns:
+            Ruta completa de la plantilla Excel.
+        """
+
+        return TEMPLATES_DIR / f"{sales_point}{EXCEL_EXTENSION}"
 
     def _get_month_name(
         self,

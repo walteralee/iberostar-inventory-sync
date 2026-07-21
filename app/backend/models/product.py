@@ -6,10 +6,10 @@ Archivo:
     product.py
 
 Descripción:
-    Modelo que representa un producto extraído de un albarán.
+    Modelo que representa un producto procedente del Excel de Economato.
 
     El código del artículo es el identificador principal utilizado para
-    localizar el producto dentro del Excel.
+    localizar el producto dentro de los Excel mensuales y las plantillas.
 """
 
 from dataclasses import dataclass
@@ -18,10 +18,10 @@ from dataclasses import dataclass
 @dataclass(slots=True)
 class Product:
     """
-    Representa un producto de un albarán.
+    Representa un producto suministrado a un punto de venta.
     """
 
-    code: int
+    code: str
     name: str
     format: str
     price: float

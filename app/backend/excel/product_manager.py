@@ -19,6 +19,10 @@ from openpyxl.worksheet.worksheet import Worksheet
 from config.constants import (
     FIRST_PRODUCT_ROW,
     PRODUCT_CODE_COLUMN,
+    PRODUCT_NAME_COLUMN,
+    CURRENT_STOCK_COLUMN,
+    PRODUCT_FORMAT_COLUMN,
+    PRODUCT_PRICE_COLUMN,
 )
 from models.product import Product
 
@@ -47,7 +51,6 @@ class ProductManager:
         merged_ranges_to_move: list[tuple[int, int, int, int]] = []
 
         for merged_range in list(worksheet.merged_cells.ranges):
-
             if merged_range.min_row <= total_row <= merged_range.max_row:
                 merged_ranges_to_move.append(
                     (
@@ -72,7 +75,6 @@ class ProductManager:
             max_row,
             max_column,
         ) in merged_ranges_to_move:
-
             worksheet.merge_cells(
                 start_row=min_row + 1,
                 start_column=min_column,
@@ -97,27 +99,46 @@ class ProductManager:
             FIRST_PRODUCT_ROW,
             worksheet.max_row + 1,
         ):
-
             code_value = worksheet.cell(
                 row=row,
                 column=PRODUCT_CODE_COLUMN,
             ).value
 
-            try:
-                int(code_value)
+            if self._is_product_code(code_value):
                 last_product_row = row
                 continue
 
-            except (TypeError, ValueError):
-                pass
-
-            if row > last_product_row and self._row_contains_formulas(
-                worksheet,
-                row,
-            ):
+            if row > last_product_row and self._row_contains_formulas(worksheet, row):
                 return row
 
         return last_product_row + 1
+
+    def _is_product_code(
+        self,
+        value: object,
+    ) -> bool:
+        """
+        Comprueba si un valor puede representar un código de producto.
+
+        Los códigos se consideran identificadores numéricos, pero se
+        conservan como texto para evitar perder ceros iniciales.
+        """
+
+        if value is None:
+            return False
+
+        if isinstance(value, bool):
+            return False
+
+        if isinstance(value, int):
+            return True
+
+        if isinstance(value, float):
+            return value.is_integer()
+
+        code = str(value).strip()
+
+        return bool(code) and code.isdigit()
 
     def _row_contains_formulas(
         self,
@@ -132,7 +153,6 @@ class ProductManager:
             1,
             worksheet.max_column + 1,
         ):
-
             value = worksheet.cell(
                 row=row,
                 column=column,
@@ -162,7 +182,6 @@ class ProductManager:
             1,
             worksheet.max_column + 1,
         ):
-
             source = worksheet.cell(
                 row=source_row,
                 column=column,
@@ -183,7 +202,7 @@ class ProductManager:
     def find_or_create(
         self,
         worksheet: Worksheet,
-        product_index: dict[int, int],
+        product_index: dict[str, int],
         product: Product,
     ) -> tuple[int, bool]:
         """
@@ -196,8 +215,13 @@ class ProductManager:
                 - False si el producto ya existía.
         """
 
+        product_code = product.code.strip()
+
+        if not product_code:
+            raise ValueError("El código del producto no puede estar vacío.")
+
         row = product_index.get(
-            product.code,
+            product_code,
         )
 
         # ==================================================
@@ -205,9 +229,8 @@ class ProductManager:
         # ==================================================
 
         if row is not None:
-
             print(
-                f"Código: {product.code:<8} | "
+                f"Código: {product_code:<8} | "
                 f"EXISTENTE | "
                 f"Fila: {row:<5} | "
                 f"No se modifican sus datos"
@@ -219,20 +242,20 @@ class ProductManager:
         # PRODUCTO NUEVO
         # ==================================================
 
-        print(f"Código: {product.code:<8} | " f"NUEVO     | " f"Creando producto...")
+        print(f"Código: {product_code:<8} | " f"NUEVO     | " f"Creando producto...")
 
         row = self._insert_product_row(
             worksheet,
         )
 
-        print(f"{'':18}│ " f"Fila insertada          : {row}")
+        print(f"{'':18}│ Fila insertada          : {row}")
 
         self._copy_row_format(
             worksheet,
             row,
         )
 
-        print(f"{'':18}│ " f"Formato copiado         : SÍ")
+        print(f"{'':18}│ Formato copiado         : SÍ")
 
         self._fill_product_data(
             worksheet,
@@ -240,31 +263,30 @@ class ProductManager:
             product,
         )
 
-        print(f"{'':18}│ " f"Código                  : {product.code}")
-        print(f"{'':18}│ " f"Nombre                  : {product.name}")
-        print(f"{'':18}│ " f"Stock actual            : 0")
-        print(f"{'':18}│ " f"Formato                 : {product.format}")
-        print(f"{'':18}│ " f"Precio                  : {product.price}")
+        print(f"{'':18}│ Código                  : {product_code}")
+        print(f"{'':18}│ Nombre                  : {product.name}")
+        print(f"{'':18}│ Stock actual            : 0")
+        print(f"{'':18}│ Formato                 : {product.format}")
+        print(f"{'':18}│ Precio                  : {product.price}")
 
         self._copy_product_formulas(
             worksheet,
             row,
         )
 
-        print(f"{'':18}│ " f"Fórmulas adaptadas      : SÍ")
+        print(f"{'':18}│ Fórmulas adaptadas      : SÍ")
 
         self._update_total_formulas(
             worksheet,
             row,
         )
 
-        print(f"{'':18}│ " f"Totales actualizados    : SÍ")
+        print(f"{'':18}│ Totales actualizados    : SÍ")
 
-        product_index[product.code] = row
+        product_index[product_code] = row
 
-        print(f"{'':18}│ " f"Índice actualizado      : SÍ")
-
-        print(f"{'':18}└─ " f"Resultado               : PRODUCTO CREADO")
+        print(f"{'':18}│ Índice actualizado      : SÍ")
+        print(f"{'':18}└─ Resultado               : PRODUCTO CREADO")
 
         return row, True
 
@@ -278,29 +300,32 @@ class ProductManager:
         Escribe los datos principales del nuevo producto.
         """
 
-        worksheet.cell(
+        code_cell = worksheet.cell(
             row=row,
-            column=1,
-        ).value = product.code
+            column=PRODUCT_CODE_COLUMN,
+        )
+
+        code_cell.value = product.code.strip()
+        code_cell.number_format = "@"
 
         worksheet.cell(
             row=row,
-            column=2,
+            column=PRODUCT_NAME_COLUMN,
         ).value = product.name
 
         worksheet.cell(
             row=row,
-            column=3,
+            column=CURRENT_STOCK_COLUMN,
         ).value = 0
 
         worksheet.cell(
             row=row,
-            column=4,
+            column=PRODUCT_FORMAT_COLUMN,
         ).value = product.format
 
         worksheet.cell(
             row=row,
-            column=5,
+            column=PRODUCT_PRICE_COLUMN,
         ).value = product.price
 
     def _copy_product_formulas(
@@ -319,7 +344,6 @@ class ProductManager:
             6,
             worksheet.max_column + 1,
         ):
-
             source = worksheet.cell(
                 row=source_row,
                 column=column,
@@ -359,7 +383,6 @@ class ProductManager:
             1,
             worksheet.max_column + 1,
         ):
-
             cell = worksheet.cell(
                 row=total_row,
                 column=column,

@@ -6,18 +6,21 @@ Archivo:
     synchronizer.py
 
 Descripción:
-    Servicio principal encargado de sincronizar los albaranes PDF con los
-    archivos Excel correspondientes.
+    Servicio encargado de sincronizar las entregas importadas
+    con los Excel mensuales y sus plantillas correspondientes.
 """
 
-from pathlib import Path
+from config.constants import DAY_HEADER_ROW
+
+from models.delivery import Delivery
 
 from excel.finder import ExcelFinder
 from excel.product_manager import ProductManager
 from excel.reader import ExcelReader
 from excel.writer import ExcelWriter
-from pdf.parser import PDFParser
+
 from services.excel_template_manager import ExcelTemplateManager
+from services.registry import Registry
 
 
 class Synchronizer:
@@ -25,36 +28,59 @@ class Synchronizer:
     Servicio principal de sincronización.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        registry: Registry,
+    ) -> None:
+        """
+        Inicializa los servicios necesarios para ejecutar
+        la sincronización.
 
-        self.pdf_parser = PDFParser()
+        Args:
+            registry: Registro compartido de entregas.
+        """
+
+        self.registry = registry
 
         self.excel_reader = ExcelReader()
         self.excel_finder = ExcelFinder()
         self.excel_writer = ExcelWriter()
-
         self.template_manager = ExcelTemplateManager()
-
         self.product_manager = ProductManager()
 
     def run(
         self,
-        pdf_files: list[Path],
+        deliveries: list[Delivery],
     ) -> None:
         """
         Ejecuta el proceso completo de sincronización.
 
         Args:
-            pdf_files: Lista de PDF que deben sincronizarse.
+            deliveries: Entregas que deben sincronizarse.
         """
+
+        # ==================================================
+        # VALIDAR ENTREGAS RECIBIDAS
+        # ==================================================
+
+        if not deliveries:
+
+            print()
+            print("=" * 100)
+            print("6. INICIO DEL PROCESO DE SINCRONIZACIÓN")
+            print("=" * 100)
+            print("Entregas recibidas: 0")
+            print("Estado            : NO HAY ENTREGAS PENDIENTES")
+            print("=" * 100)
+
+            return
 
         # ==================================================
         # CONTADORES GENERALES
         # ==================================================
 
-        synchronized_pdf_count = 0
-        ignored_pdf_count = 0
-        error_pdf_count = 0
+        synchronized_delivery_count = 0
+        error_delivery_count = 0
 
         total_products_written = 0
         total_created_in_month = 0
@@ -68,87 +94,123 @@ class Synchronizer:
         print("=" * 100)
         print("6. INICIO DEL PROCESO DE SINCRONIZACIÓN")
         print("=" * 100)
-        print(f"PDF recibidos desde el importador: {len(pdf_files)}")
+        print(f"Entregas recibidas: {len(deliveries)}")
         print("-" * 100)
 
-        for index, pdf_file in enumerate(
-            pdf_files,
+        for index, delivery in enumerate(
+            deliveries,
             start=1,
         ):
-            print(f"{index:03d} | " f"{pdf_file.name}")
+
+            sales_point_name = getattr(
+                getattr(
+                    delivery,
+                    "sales_point",
+                    None,
+                ),
+                "name",
+                "DESCONOCIDO",
+            )
+
+            delivery_date = getattr(
+                delivery,
+                "delivery_date",
+                None,
+            )
+
+            formatted_date = (
+                delivery_date.strftime("%d/%m/%Y")
+                if delivery_date is not None
+                else "FECHA DESCONOCIDA"
+            )
+
+            print(f"{index:03d} | " f"{formatted_date} | " f"{sales_point_name}")
 
         print("=" * 100)
 
         # ==================================================
-        # PROCESAMIENTO DE LOS PDF
+        # PROCESAMIENTO DE LAS ENTREGAS
         # ==================================================
 
-        for pdf_index, pdf_file in enumerate(
-            pdf_files,
+        for delivery_index, delivery in enumerate(
+            deliveries,
             start=1,
         ):
 
+            workbook = None
+            template_workbook = None
+
+            sales_point_name = getattr(
+                getattr(
+                    delivery,
+                    "sales_point",
+                    None,
+                ),
+                "name",
+                "",
+            )
+
             try:
+
+                # ==========================================
+                # VALIDAR ENTREGA
+                # ==========================================
+
+                if self.registry.is_synchronized(
+                    delivery,
+                ):
+
+                    print()
+                    print("-" * 100)
+                    print("ENTREGA OMITIDA")
+                    print("-" * 100)
+                    print(
+                        f"Fecha          : "
+                        f"{delivery.delivery_date.strftime('%d/%m/%Y')}"
+                    )
+                    print(f"Punto de venta : {sales_point_name}")
+                    print("Estado         : YA SINCRONIZADA")
+                    print("-" * 100)
+
+                    continue
+
+                if not sales_point_name:
+
+                    raise ValueError("La entrega no contiene un punto de venta válido.")
+
+                if delivery.delivery_date is None:
+
+                    raise ValueError("La entrega no contiene una fecha válida.")
+
+                if not delivery.products:
+
+                    raise ValueError("La entrega no contiene ningún producto.")
+
+                if not self.registry.exists(
+                    delivery,
+                ):
+
+                    self.registry.register(
+                        delivery,
+                    )
+
+                    self.registry.save()
 
                 print()
                 print()
                 print("=" * 100)
                 print(
-                    f"7. SINCRONIZACIÓN DEL PDF "
-                    f"{pdf_index:03d} DE {len(pdf_files):03d}"
+                    f"7. SINCRONIZACIÓN DE LA ENTREGA "
+                    f"{delivery_index:03d} DE {len(deliveries):03d}"
                 )
                 print("=" * 100)
-                print(f"Archivo: {pdf_file.name}")
-                print("=" * 100)
-
-                # ==========================================
-                # PARSEAR PDF
-                # ==========================================
-
-                print()
-                print("-" * 100)
-                print("7.1 LECTURA Y ANÁLISIS DEL PDF")
-                print("-" * 100)
-                print(f"Archivo        : {pdf_file.name}")
-                print("Proceso        : Enviando PDF al parser...")
-
-                delivery = self.pdf_parser.parse(
-                    pdf_file,
-                )
-
-                # ==========================================
-                # PDF NO SOPORTADO
-                # ==========================================
-
-                if delivery is None:
-
-                    ignored_pdf_count += 1
-
-                    print()
-                    print("!" * 100)
-                    print("PDF IGNORADO DURANTE LA SINCRONIZACIÓN")
-                    print("!" * 100)
-                    print(f"Archivo        : {pdf_file.name}")
-                    print("Punto de venta : NO SOPORTADO")
-                    print("Resultado      : PDF NO SINCRONIZADO")
-                    print("!" * 100)
-
-                    continue
-
-                print()
-                print("-" * 100)
-                print("DATOS DEL ALBARÁN")
-                print("-" * 100)
-                print(f"Archivo        : {pdf_file.name}")
-                print(f"Código IBS     : {delivery.ibs_code}")
                 print(
                     f"Fecha          : "
                     f"{delivery.delivery_date.strftime('%d/%m/%Y')}"
                 )
-                print(f"Punto de venta : {delivery.sales_point.name}")
+                print(f"Punto de venta : {sales_point_name}")
                 print(f"Productos      : {len(delivery.products)}")
-                print("Estado         : PDF ANALIZADO CORRECTAMENTE")
-                print("-" * 100)
+                print("=" * 100)
 
                 # ==========================================
                 # PREPARAR EXCEL MENSUALES
@@ -156,7 +218,7 @@ class Synchronizer:
 
                 print()
                 print("-" * 100)
-                print("7.2 PREPARACIÓN DE LOS EXCEL MENSUALES")
+                print("7.1 PREPARACIÓN DE LOS EXCEL MENSUALES")
                 print("-" * 100)
                 print(
                     f"Periodo        : "
@@ -166,8 +228,8 @@ class Synchronizer:
                 print("Proceso        : Comprobando Excel mensuales...")
 
                 month_directory = self.template_manager.ensure_month(
-                    delivery.delivery_date.year,
-                    delivery.delivery_date.month,
+                    year=delivery.delivery_date.year,
+                    month=delivery.delivery_date.month,
                 )
 
                 print()
@@ -183,22 +245,22 @@ class Synchronizer:
                 # ==========================================
 
                 excel_path = self.template_manager.get_excel_path(
-                    sales_point=delivery.sales_point.name,
+                    sales_point=sales_point_name,
                     year=delivery.delivery_date.year,
                     month=delivery.delivery_date.month,
                 )
 
                 print()
                 print("-" * 100)
-                print("7.3 APERTURA DEL EXCEL MENSUAL")
+                print("7.2 APERTURA DEL EXCEL MENSUAL")
                 print("-" * 100)
-                print(f"Punto de venta : {delivery.sales_point.name}")
+                print(f"Punto de venta : {sales_point_name}")
                 print(f"Archivo        : {excel_path.name}")
                 print(f"Ruta           : {excel_path}")
                 print("Proceso        : Abriendo libro de Excel...")
 
                 workbook, worksheet = self.excel_reader.read(
-                    excel_path,
+                    workbook_path=excel_path,
                 )
 
                 print("Libro          : ABIERTO CORRECTAMENTE")
@@ -206,17 +268,17 @@ class Synchronizer:
                 print("-" * 100)
 
                 # ==========================================
-                # CONSTRUIR ÍNDICE
+                # CONSTRUIR ÍNDICE DE PRODUCTOS
                 # ==========================================
 
                 print()
                 print("-" * 100)
-                print("7.4 PREPARACIÓN DE LA BÚSQUEDA DE PRODUCTOS")
+                print("7.3 PREPARACIÓN DE LA BÚSQUEDA DE PRODUCTOS")
                 print("-" * 100)
                 print("Proceso        : Construyendo índice código → fila...")
 
                 product_index = self.excel_finder.build_product_index(
-                    worksheet,
+                    worksheet=worksheet,
                 )
 
                 print(f"Productos      : {len(product_index)}")
@@ -224,30 +286,48 @@ class Synchronizer:
                 print("-" * 100)
 
                 # ==========================================
-                # BUSCAR COLUMNA DEL DÍA
+                # LOCALIZAR COLUMNA DEL DÍA
                 # ==========================================
 
                 print()
                 print("-" * 100)
-                print("7.5 LOCALIZACIÓN DEL DÍA DEL ALBARÁN")
+                print("7.4 LOCALIZACIÓN DEL DÍA DE LA ENTREGA")
                 print("-" * 100)
 
+                day = delivery.delivery_date.day
+
                 day_column = self.excel_finder.find_day_column(
-                    delivery.delivery_date.day,
+                    day=day,
                 )
 
-                print(f"Día            : {delivery.delivery_date.day}")
+                print(f"Día            : {day}")
                 print(f"Columna        : {day_column}")
-                print("Estado         : COLUMNA DEL DÍA LOCALIZADA")
+                print("Proceso        : Validando cabecera del día...")
+
+                day_header_value = worksheet.cell(
+                    row=DAY_HEADER_ROW,
+                    column=day_column,
+                ).value
+                if str(day_header_value).strip() != str(day):
+
+                    raise ValueError(
+                        f"La columna {day_column} no corresponde "
+                        f"al día {day}. "
+                        f"Valor encontrado: {day_header_value}"
+                    )
+
+                print(f"Cabecera       : {day_header_value}")
+                print("Estado         : COLUMNA DEL DÍA VALIDADA")
                 print("-" * 100)
 
                 # ==========================================
-                # CONTADORES DEL PDF
+                # CONTADORES DE LA ENTREGA
                 # ==========================================
 
                 written = 0
                 created_in_month = 0
                 existing_in_month = 0
+                created_in_template = 0
 
                 new_products = []
 
@@ -257,10 +337,10 @@ class Synchronizer:
 
                 print()
                 print("=" * 100)
-                print("7.6 SINCRONIZACIÓN DE PRODUCTOS CON EL EXCEL MENSUAL")
+                print("7.5 SINCRONIZACIÓN DE PRODUCTOS")
                 print("=" * 100)
                 print(f"Excel          : {excel_path.name}")
-                print(f"Día            : {delivery.delivery_date.day}")
+                print(f"Día            : {day}")
                 print(f"Columna        : {day_column}")
                 print(f"Productos      : {len(delivery.products)}")
                 print("-" * 100)
@@ -282,7 +362,7 @@ class Synchronizer:
                     print(f"Nombre         : {product.name}")
                     print(f"Formato        : {product.format}")
                     print(f"Precio         : {product.price}")
-                    print(f"Cantidad PDF   : {product.quantity}")
+                    print(f"Cantidad       : {product.quantity}")
                     print("Proceso        : Buscando producto en el Excel...")
 
                     row, created = self.product_manager.find_or_create(
@@ -314,6 +394,7 @@ class Synchronizer:
                     print(
                         f"Escritura      : Acumulando " f"{product.quantity} unidades"
                     )
+
                     print(f"Destino        : " f"Fila {row} | Columna {day_column}")
 
                     self.excel_writer.write(
@@ -339,38 +420,37 @@ class Synchronizer:
                 print("=" * 100)
 
                 # ==========================================
-                # ACTUALIZAR PLANTILLA
+                # ACTUALIZAR PLANTILLA ORIGINAL
                 # ==========================================
-
-                created_in_template = 0
 
                 print()
                 print("=" * 100)
-                print("7.7 ACTUALIZACIÓN DE LA PLANTILLA ORIGINAL")
+                print("7.6 ACTUALIZACIÓN DE LA PLANTILLA ORIGINAL")
                 print("=" * 100)
 
                 if new_products:
 
                     template_path = self.template_manager.get_template_path(
-                        sales_point=delivery.sales_point.name,
+                        sales_point=sales_point_name,
                     )
 
                     print(f"Plantilla      : {template_path.name}")
                     print(f"Ruta           : {template_path}")
-                    print(f"Productos nuevos detectados: {len(new_products)}")
+                    print(f"Productos nuevos detectados: " f"{len(new_products)}")
                     print("-" * 100)
                     print("Proceso        : Abriendo plantilla original...")
 
                     template_workbook, template_worksheet = self.excel_reader.read(
-                        template_path,
+                        workbook_path=template_path,
                     )
 
                     print("Plantilla      : ABIERTA CORRECTAMENTE")
                     print(f"Hoja utilizada : {template_worksheet.title}")
-                    print("Proceso        : Construyendo índice de la plantilla...")
+
+                    print("Proceso        : Construyendo índice " "de la plantilla...")
 
                     template_product_index = self.excel_finder.build_product_index(
-                        template_worksheet,
+                        worksheet=template_worksheet,
                     )
 
                     print(
@@ -393,10 +473,6 @@ class Synchronizer:
                         print("-" * 100)
                         print(f"Código         : {product.code}")
                         print(f"Nombre         : {product.name}")
-                        print(
-                            "Proceso        : Comprobando producto "
-                            "en la plantilla..."
-                        )
 
                         template_row, created = self.product_manager.find_or_create(
                             worksheet=template_worksheet,
@@ -416,7 +492,7 @@ class Synchronizer:
 
                             print("Existía        : SÍ")
                             print(f"Fila utilizada : {template_row}")
-                            print("Resultado      : PLANTILLA NO MODIFICADA")
+                            print("Resultado      : YA EXISTÍA")
 
                     print()
                     print("-" * 100)
@@ -441,19 +517,7 @@ class Synchronizer:
                         print("Estado             : SIN CAMBIOS")
                         print("Guardado           : NO NECESARIO")
 
-                    print("-" * 100)
-
-                else:
-
-                    print(f"Plantilla      : {delivery.sales_point.name}.xlsx")
-                    print("Productos nuevos: 0")
-                    print("Actualización  : NO NECESARIA")
-                    print(
-                        "Resultado      : Todos los productos "
-                        "ya existían en el Excel mensual."
-                    )
-
-                print("=" * 100)
+                print("-" * 100)
 
                 # ==========================================
                 # GUARDAR EXCEL MENSUAL
@@ -461,8 +525,9 @@ class Synchronizer:
 
                 print()
                 print("=" * 100)
-                print("7.8 GUARDADO DEL EXCEL MENSUAL")
+                print("7.7 GUARDADO DEL EXCEL MENSUAL")
                 print("=" * 100)
+
                 print(f"Archivo        : {excel_path.name}")
                 print(f"Ruta           : {excel_path}")
                 print("Proceso        : Guardando cambios...")
@@ -471,6 +536,12 @@ class Synchronizer:
                     excel_path,
                 )
 
+                self.registry.mark_as_synchronized(
+                    delivery,
+                )
+
+                self.registry.save()
+
                 print("Estado         : GUARDADO CORRECTAMENTE")
                 print("=" * 100)
 
@@ -478,51 +549,65 @@ class Synchronizer:
                 # ACTUALIZAR CONTADORES GENERALES
                 # ==========================================
 
-                synchronized_pdf_count += 1
+                synchronized_delivery_count += 1
                 total_products_written += written
                 total_created_in_month += created_in_month
                 total_created_in_template += created_in_template
 
                 # ==========================================
-                # RESUMEN DEL PDF
+                # RESUMEN DE LA ENTREGA
                 # ==========================================
 
                 print()
                 print("=" * 100)
-                print(f"RESUMEN DEL PDF " f"{pdf_index:03d} DE {len(pdf_files):03d}")
+                print(
+                    f"RESUMEN DE LA ENTREGA "
+                    f"{delivery_index:03d} DE {len(deliveries):03d}"
+                )
                 print("=" * 100)
-                print(f"PDF                     : {pdf_file.name}")
-                print(f"Código IBS              : {delivery.ibs_code}")
                 print(
                     f"Fecha                   : "
                     f"{delivery.delivery_date.strftime('%d/%m/%Y')}"
                 )
-                print(f"Punto de venta          : {delivery.sales_point.name}")
+                print(f"Punto de venta          : {sales_point_name}")
                 print(f"Excel mensual           : {excel_path.name}")
-                print(f"Productos en PDF        : {len(delivery.products)}")
+                print(f"Productos recibidos     : {len(delivery.products)}")
                 print(f"Productos existentes    : {existing_in_month}")
                 print(f"Nuevos en Excel mensual : {created_in_month}")
                 print(f"Productos escritos      : {written}")
                 print(f"Nuevos en plantilla     : {created_in_template}")
-                print("Estado                  : SINCRONIZADO CORRECTAMENTE")
+                print("Estado                  : SINCRONIZADA CORRECTAMENTE")
                 print("=" * 100)
 
             except Exception as error:
 
-                error_pdf_count += 1
+                error_delivery_count += 1
 
                 print()
                 print("!" * 100)
-                print(f"ERROR DURANTE LA SINCRONIZACIÓN " f"DEL PDF {pdf_index:03d}")
+                print(
+                    f"ERROR DURANTE LA SINCRONIZACIÓN "
+                    f"DE LA ENTREGA {delivery_index:03d}"
+                )
                 print("!" * 100)
-                print(f"Archivo        : {pdf_file.name}")
+                print(f"Punto de venta : {sales_point_name}")
                 print("Estado         : ERROR")
                 print(f"Tipo           : {type(error).__name__}")
                 print(f"Motivo         : {error}")
-                print("Resultado      : PDF NO SINCRONIZADO")
+                print("Resultado      : ENTREGA NO SINCRONIZADA")
                 print("!" * 100)
 
                 continue
+
+            finally:
+
+                if template_workbook is not None:
+
+                    template_workbook.close()
+
+                if workbook is not None:
+
+                    workbook.close()
 
         # ==================================================
         # RESUMEN GENERAL
@@ -533,22 +618,21 @@ class Synchronizer:
         print("=" * 100)
         print("8. RESUMEN GENERAL DE SINCRONIZACIÓN")
         print("=" * 100)
-        print(f"PDF recibidos             : {len(pdf_files)}")
-        print(f"PDF sincronizados         : {synchronized_pdf_count}")
-        print(f"PDF ignorados             : {ignored_pdf_count}")
-        print(f"PDF con errores           : {error_pdf_count}")
+        print(f"Entregas recibidas         : {len(deliveries)}")
+        print(f"Entregas sincronizadas     : " f"{synchronized_delivery_count}")
+        print(f"Entregas con errores       : " f"{error_delivery_count}")
         print("-" * 100)
-        print(f"Productos escritos        : {total_products_written}")
-        print(f"Nuevos en Excel mensuales : {total_created_in_month}")
-        print(f"Nuevos en plantillas      : {total_created_in_template}")
+        print(f"Productos escritos         : {total_products_written}")
+        print(f"Nuevos en Excel mensuales  : {total_created_in_month}")
+        print(f"Nuevos en plantillas       : {total_created_in_template}")
         print("-" * 100)
 
-        if error_pdf_count == 0:
+        if error_delivery_count == 0:
 
-            print("Estado final              : SINCRONIZACIÓN COMPLETADA")
+            print("Estado final               : SINCRONIZACIÓN COMPLETADA")
 
         else:
 
-            print("Estado final              : COMPLETADA CON ERRORES")
+            print("Estado final               : COMPLETADA CON ERRORES")
 
         print("=" * 100)

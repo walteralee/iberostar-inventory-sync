@@ -10,25 +10,53 @@ Descripción:
 """
 
 from services.importer import Importer
+from services.registry import Registry
 from services.synchronizer import Synchronizer
 
 
 def main() -> None:
     """
-    Ejecuta la importación y sincronización completa.
+    Ejecuta el proceso completo de importación
+    y sincronización.
     """
 
-    importer = Importer()
+    # ==================================================
+    # SERVICIOS COMPARTIDOS
+    # ==================================================
 
-    pdf_files = importer.run()
+    registry = Registry()
 
-    if not pdf_files:
+    importer = Importer(
+        registry=registry,
+    )
+
+    synchronizer = Synchronizer(
+        registry=registry,
+    )
+
+    # ==================================================
+    # IMPORTACIÓN
+    # ==================================================
+
+    deliveries = importer.run()
+
+    if not deliveries:
+
+        print()
+        print("=" * 100)
+        print("PROCESO FINALIZADO")
+        print("=" * 100)
+        print("No existen entregas pendientes de sincronizar.")
+        print("=" * 100)
+
         return
 
-    synchronizer = Synchronizer()
+    # ==================================================
+    # SINCRONIZACIÓN
+    # ==================================================
 
     synchronizer.run(
-        pdf_files,
+        deliveries,
     )
 
 

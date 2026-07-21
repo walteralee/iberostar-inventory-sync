@@ -6,11 +6,11 @@ Archivo:
     delivery.py
 
 Descripción:
-    Modelo que representa un albarán de entrega.
+    Modelo que representa una entrega de Economato.
 
-    Un albarán pertenece a un único punto de venta, posee un código
-    identificador único (Cód. Ibs.), una fecha de entrega y contiene
-    todos los productos suministrados en dicho movimiento.
+    Cada entrega pertenece a un único punto de venta, corresponde
+    a una única fecha y agrupa todos los productos suministrados
+    en dicho movimiento.
 """
 
 from dataclasses import dataclass, field
@@ -23,10 +23,11 @@ from models.sales_point import SalesPoint
 @dataclass(slots=True)
 class Delivery:
     """
-    Representa un albarán de entrega.
+    Representa una entrega de Economato
+    correspondiente a un punto de venta
+    en una fecha determinada.
     """
 
-    ibs_code: int
     sales_point: SalesPoint
     delivery_date: date
     products: list[Product] = field(default_factory=list)

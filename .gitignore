@@ -22,16 +22,6 @@ ENV/
 .env
 
 # ==========================================================
-# PYTHON TOOLS
-# ==========================================================
-
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.coverage
-htmlcov/
-
-# ==========================================================
 # IDE
 # ==========================================================
 
@@ -50,82 +40,56 @@ desktop.ini
 # LOGS
 # ==========================================================
 
-*.log
 storage/logs/*
-
-!storage/logs/
 !storage/logs/.gitkeep
 
+*.log
+
 # ==========================================================
-# TEMP FILES
+# REGISTRY
 # ==========================================================
 
-storage/temp/*
+storage/registry/*
+!storage/registry/.gitkeep
 
-!storage/temp/
-!storage/temp/.gitkeep
+# ==========================================================
+# MONTHLY GENERATED EXCELS
+# ==========================================================
+
+storage/input/excels/*
+!storage/input/excels/.gitkeep
 
 # ==========================================================
 # BACKUPS
 # ==========================================================
 
 storage/backup/*
-
-!storage/backup/
 !storage/backup/.gitkeep
 
 # ==========================================================
-# GENERATED OUTPUT
+# PYTEST
 # ==========================================================
 
-storage/output/*
-
-!storage/output/
-!storage/output/.gitkeep
-
-# ==========================================================
-# HOTEL DATA (PRIVATE)
-# ==========================================================
-
-# Mantener la estructura
-!storage/input/
-!storage/input/excels/
-!storage/input/pdfs/
-
-# Ignorar todo el contenido
-storage/input/excels/*
-storage/input/pdfs/*
-
-# Excepto los .gitkeep
-!storage/input/excels/.gitkeep
-!storage/input/pdfs/.gitkeep
+.pytest_cache/
+.coverage
+htmlcov/
 
 # ==========================================================
-# TEMPLATES (VERSIONADAS)
+# MYPY
 # ==========================================================
 
-# Las plantillas forman parte del proyecto
-!storage/templates/
-!storage/templates/**
+.mypy_cache/
 
 # ==========================================================
-# REGISTRY
+# BUILD
 # ==========================================================
 
-# Mantener la carpeta
-!storage/registry/
-
-# Ignorar el registro generado por la aplicación
-storage/registry/imported_deliveries.json
-
-# Mantener únicamente la estructura
-!storage/registry/.gitkeep
+build/
+dist/
+*.egg-info/
 
 # ==========================================================
-# DOCUMENTATION (Opcional)
+# JUPYTER
 # ==========================================================
 
-# *.pdf
-
-# Archivos temporales de Microsoft Excel
-~$*
+.ipynb_checkpoints/

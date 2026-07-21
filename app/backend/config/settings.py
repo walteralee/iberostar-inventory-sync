@@ -21,7 +21,6 @@ from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
 
-
 # ==========================================================
 # STORAGE
 # ==========================================================
@@ -30,39 +29,30 @@ STORAGE_DIR = ROOT_DIR / "storage"
 
 INPUT_DIR = STORAGE_DIR / "input"
 
-INPUT_EXCELS_DIR = INPUT_DIR / "excels"
-INPUT_PDFS_DIR = INPUT_DIR / "pdfs"
+# Excel mensuales generados y actualizados por el programa.
+MONTHLY_EXCELS_DIR = INPUT_DIR / "excels"
 
-OUTPUT_DIR = STORAGE_DIR / "output"
-BACKUP_DIR = STORAGE_DIR / "backup"
-LOGS_DIR = STORAGE_DIR / "logs"
-TEMP_DIR = STORAGE_DIR / "temp"
-
+# Plantillas originales de cada punto de venta.
 TEMPLATES_DIR = STORAGE_DIR / "templates"
 
+# Copias de seguridad de los Excel modificados.
+BACKUP_DIR = STORAGE_DIR / "backup"
+
+# Archivos de registro del programa.
+LOGS_DIR = STORAGE_DIR / "logs"
+
+# Registry de entregas sincronizadas.
 REGISTRY_DIR = STORAGE_DIR / "registry"
 REGISTRY_FILE = REGISTRY_DIR / "imported_deliveries.json"
-
 
 # ==========================================================
 # CREATE DIRECTORIES
 # ==========================================================
 
-INPUT_EXCELS_DIR.mkdir(parents=True, exist_ok=True)
-INPUT_PDFS_DIR.mkdir(parents=True, exist_ok=True)
-
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-LOGS_DIR.mkdir(parents=True, exist_ok=True)
-TEMP_DIR.mkdir(parents=True, exist_ok=True)
+MONTHLY_EXCELS_DIR.mkdir(parents=True, exist_ok=True)
 
 TEMPLATES_DIR.mkdir(parents=True, exist_ok=True)
+BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+LOGS_DIR.mkdir(parents=True, exist_ok=True)
+
 REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
-
-# ==========================================================
-# REGISTRY
-# ==========================================================
-
-REGISTRY_DIR = STORAGE_DIR / "registry"
-
-REGISTRY_FILE = REGISTRY_DIR / "imported_deliveries.json"

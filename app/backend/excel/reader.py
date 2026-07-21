@@ -8,8 +8,8 @@ Archivo:
 Descripción:
     Lector de archivos Excel.
 
-    Este módulo únicamente abre un archivo Excel y devuelve el libro y la
-    hoja de trabajo principal.
+    Este módulo abre un archivo Excel y devuelve el libro junto
+    con la hoja de trabajo principal utilizada por el proyecto.
 """
 
 from pathlib import Path
@@ -23,30 +23,68 @@ from config.constants import EXCEL_SHEET_NAME
 
 class ExcelReader:
     """
-    Lector de documentos Excel.
+    Lector de los Excel mensuales y de las plantillas.
     """
 
-    def read(self, excel_path: Path) -> tuple[Workbook, Worksheet]:
+    def read(
+        self,
+        workbook_path: Path,
+    ) -> tuple[Workbook, Worksheet]:
         """
-        Abre un archivo Excel y devuelve el libro junto con la hoja
-        'extraccion'.
+        Abre un archivo Excel y devuelve el libro junto con
+        la hoja configurada en EXCEL_SHEET_NAME.
 
         Args:
-            excel_path: Ruta del archivo Excel.
+            workbook_path: Ruta del archivo Excel.
 
         Returns:
-            Tupla formada por:
-                - Workbook
-                - Worksheet
+            Tupla formada por el libro y la hoja de trabajo.
+
+        Raises:
+            FileNotFoundError: Si el archivo no existe.
+            ValueError: Si la ruta no es un archivo Excel válido
+                o si no contiene la hoja requerida.
         """
 
-        if not excel_path.exists():
-            raise FileNotFoundError(excel_path)
+        workbook_path = Path(
+            workbook_path,
+        )
 
-        workbook = load_workbook(filename=excel_path)
+        if not workbook_path.exists():
+
+            raise FileNotFoundError(
+                f"No se encontró el archivo Excel: {workbook_path}",
+            )
+
+        if not workbook_path.is_file():
+
+            raise ValueError(
+                f"La ruta no corresponde a un archivo: {workbook_path}",
+            )
+
+        if workbook_path.suffix.lower() != ".xlsx":
+
+            raise ValueError(
+                f"El archivo no tiene extensión .xlsx: {workbook_path.name}",
+            )
+
+        workbook = load_workbook(
+            filename=workbook_path,
+        )
 
         if EXCEL_SHEET_NAME not in workbook.sheetnames:
-            raise ValueError(f"No existe la hoja '{EXCEL_SHEET_NAME}'.")
+
+            available_sheets = ", ".join(
+                workbook.sheetnames,
+            )
+
+            workbook.close()
+
+            raise ValueError(
+                f"No existe la hoja '{EXCEL_SHEET_NAME}' "
+                f"en el archivo '{workbook_path.name}'. "
+                f"Hojas disponibles: {available_sheets}",
+            )
 
         worksheet = workbook[EXCEL_SHEET_NAME]
 

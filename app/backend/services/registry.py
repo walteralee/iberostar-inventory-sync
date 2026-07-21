@@ -6,22 +6,25 @@ Archivo:
     registry.py
 
 Descripción:
-    Servicio encargado de gestionar el registro de albaranes
-    importados.
+    Servicio encargado de gestionar el registro de las
+    entregas importadas y sincronizadas.
+
+    Cada entrega se identifica mediante la combinación de su
+    fecha y su punto de venta.
 """
 
-from datetime import datetime
-from pathlib import Path
+from datetime import date, datetime
 import json
+import unicodedata
 
 from config.constants import MONTHS
 from config.settings import REGISTRY_FILE
-from models.pdf_metadata import PDFMetadata
+from models.delivery import Delivery
 
 
 class Registry:
     """
-    Gestiona el registro de albaranes importados.
+    Gestiona el registro de entregas importadas y sincronizadas.
     """
 
     def __init__(self) -> None:
@@ -45,119 +48,176 @@ class Registry:
 
     def exists(
         self,
-        ibs_code: str,
+        delivery: Delivery,
     ) -> bool:
         """
-        Comprueba si un albarán ya está registrado.
+        Comprueba si una entrega ya está registrada.
 
         Args:
-            ibs_code: Código IBS del albarán.
+            delivery: Entrega que se desea comprobar.
 
         Returns:
-            True si el albarán ya existe.
+            True si la entrega ya existe.
         """
 
-        return ibs_code in self._data
+        delivery_key = self._build_delivery_key(
+            delivery,
+        )
+
+        return delivery_key in self._data
 
     def is_synchronized(
         self,
-        ibs_code: str,
+        delivery: Delivery,
     ) -> bool:
         """
-        Comprueba si un albarán ya ha sido sincronizado.
+        Comprueba si una entrega ya ha sido sincronizada.
 
         Args:
-            ibs_code: Código IBS.
+            delivery: Entrega que se desea comprobar.
 
         Returns:
-            True si ya fue sincronizado.
+            True si la entrega ya fue sincronizada.
         """
 
-        if not self.exists(
-            ibs_code,
-        ):
+        delivery_key = self._build_delivery_key(
+            delivery,
+        )
+
+        if delivery_key not in self._data:
             return False
 
-        return self._data[ibs_code]["synchronized"]
+        return bool(
+            self._data[delivery_key].get(
+                "synchronized",
+                False,
+            )
+        )
 
     def mark_as_synchronized(
         self,
-        ibs_code: str,
+        delivery: Delivery,
     ) -> None:
         """
-        Marca un albarán como sincronizado.
+        Marca una entrega como sincronizada.
 
         Args:
-            ibs_code: Código IBS.
+            delivery: Entrega que se desea actualizar.
         """
+
+        delivery_key = self._build_delivery_key(
+            delivery,
+        )
+
+        parsed_date = self._parse_delivery_date(
+            delivery.delivery_date,
+        )
+
+        delivery_date = parsed_date.strftime(
+            "%d/%m/%Y",
+        )
+
+        sales_point_name = delivery.sales_point.name.strip()
 
         print()
         print("-" * 100)
         print("ACTUALIZACIÓN DEL ESTADO DE SINCRONIZACIÓN")
         print("-" * 100)
-        print(f"Código IBS    : {ibs_code}")
-        print("Proceso       : Marcando albarán como sincronizado...")
+        print(f"Identificador   : {delivery_key}")
+        print(f"Fecha           : {delivery_date}")
+        print(f"Punto de venta  : {sales_point_name}")
+        print("Proceso         : Marcando entrega como sincronizada...")
 
-        if self.exists(
-            ibs_code,
-        ):
+        if delivery_key in self._data:
 
-            self._data[ibs_code]["synchronized"] = True
+            previous_status = bool(
+                self._data[delivery_key].get(
+                    "synchronized",
+                    False,
+                )
+            )
 
-            print("IBS registrado: SÍ")
-            print("Estado anterior: PENDIENTE")
-            print("Estado actual  : SINCRONIZADO")
+            self._data[delivery_key]["synchronized"] = True
+
+            print("Registrada      : SÍ")
+            print(
+                "Estado anterior : "
+                f"{'SINCRONIZADO' if previous_status else 'PENDIENTE'}"
+            )
+            print("Estado actual   : SINCRONIZADO")
 
         else:
 
-            print("IBS registrado: NO")
-            print("Estado        : NO MODIFICADO")
+            print("Registrada      : NO")
+            print("Estado          : NO MODIFICADO")
             print(
-                "Resultado     : No se puede marcar como sincronizado "
-                "porque el IBS no existe."
+                "Resultado       : No se puede marcar como sincronizada "
+                "porque la entrega no existe."
             )
 
         print("-" * 100)
 
     def register(
         self,
-        metadata: PDFMetadata,
-        pdf_path: Path,
+        delivery: Delivery,
     ) -> None:
         """
-        Registra un nuevo albarán importado.
+        Registra una nueva entrega importada.
 
         Args:
-            metadata: Metadatos del PDF.
-            pdf_path: Ruta donde se ha almacenado el PDF.
+            delivery: Entrega que se añadirá al registro.
         """
 
-        parsed_date = datetime.strptime(
-            metadata.delivery_date,
+        delivery_key = self._build_delivery_key(
+            delivery,
+        )
+
+        parsed_date = self._parse_delivery_date(
+            delivery.delivery_date,
+        )
+
+        delivery_date = parsed_date.strftime(
             "%d/%m/%Y",
         )
 
-        self._data[metadata.ibs_code] = {
-            "delivery_date": metadata.delivery_date,
+        month = MONTHS[parsed_date.month - 1]
+        sales_point_name = delivery.sales_point.name.strip()
+
+        if delivery_key in self._data:
+
+            print()
+            print("-" * 100)
+            print("REGISTRO DE LA ENTREGA")
+            print("-" * 100)
+            print(f"Identificador   : {delivery_key}")
+            print(f"Fecha           : {delivery_date}")
+            print(f"Punto de venta  : {sales_point_name}")
+            print("Estado          : YA EXISTE EN EL REGISTRY")
+            print("-" * 100)
+
+            return
+
+        self._data[delivery_key] = {
+            "delivery_date": delivery_date,
             "year": parsed_date.year,
-            "month": MONTHS[parsed_date.month - 1],
-            "sales_point": metadata.sales_point,
-            "pdf": str(pdf_path),
+            "month": month,
+            "sales_point": sales_point_name,
+            "products": len(delivery.products),
             "synchronized": False,
         }
 
         print()
         print("-" * 100)
-        print("REGISTRO DEL ALBARÁN")
+        print("REGISTRO DE LA ENTREGA")
         print("-" * 100)
-        print(f"Código IBS     : {metadata.ibs_code}")
-        print(f"Fecha          : {metadata.delivery_date}")
-        print(f"Año            : {parsed_date.year}")
-        print(f"Mes            : {MONTHS[parsed_date.month - 1]}")
-        print(f"Punto de venta : {metadata.sales_point}")
-        print(f"Archivo        : {pdf_path.name}")
-        print("Sincronización : PENDIENTE")
-        print("Estado         : AÑADIDO AL REGISTRY")
+        print(f"Identificador   : {delivery_key}")
+        print(f"Fecha           : {delivery_date}")
+        print(f"Año             : {parsed_date.year}")
+        print(f"Mes             : {month}")
+        print(f"Punto de venta  : {sales_point_name}")
+        print(f"Productos       : {len(delivery.products)}")
+        print("Sincronización  : PENDIENTE")
+        print("Estado          : AÑADIDA AL REGISTRY")
         print("-" * 100)
 
     def save(self) -> None:
@@ -174,7 +234,16 @@ class Registry:
         print(f"Registros      : {len(self._data)}")
         print("Proceso        : Guardando contenido...")
 
-        with REGISTRY_FILE.open(
+        REGISTRY_FILE.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        temporary_file = REGISTRY_FILE.with_suffix(
+            f"{REGISTRY_FILE.suffix}.tmp",
+        )
+
+        with temporary_file.open(
             "w",
             encoding="utf-8",
         ) as file:
@@ -186,12 +255,69 @@ class Registry:
                 ensure_ascii=False,
             )
 
+        temporary_file.replace(
+            REGISTRY_FILE,
+        )
+
         print("Estado         : GUARDADO CORRECTAMENTE")
         print("-" * 100)
 
     # ======================================================
     # PRIVATE
     # ======================================================
+
+    def _build_delivery_key(
+        self,
+        delivery: Delivery,
+    ) -> str:
+        """
+        Genera el identificador único de una entrega.
+
+        El identificador combina la fecha en formato ISO
+        y el nombre normalizado del punto de venta.
+
+        Args:
+            delivery: Entrega de la que se generará la clave.
+
+        Returns:
+            Identificador único de la entrega.
+        """
+
+        parsed_date = self._parse_delivery_date(
+            delivery.delivery_date,
+        )
+
+        sales_point_name = self._normalize_key_text(
+            delivery.sales_point.name,
+        )
+
+        if not sales_point_name:
+            raise ValueError(
+                "El punto de venta de la entrega está vacío.",
+            )
+
+        return f"{parsed_date.strftime('%Y-%m-%d')}" f"|{sales_point_name}"
+
+    def _normalize_key_text(
+        self,
+        value: object,
+    ) -> str:
+        """
+        Normaliza un texto para utilizarlo dentro de una clave.
+        """
+
+        normalized_value = unicodedata.normalize(
+            "NFKD",
+            str(value).strip(),
+        )
+
+        normalized_value = "".join(
+            character
+            for character in normalized_value
+            if not unicodedata.combining(character)
+        )
+
+        return " ".join(normalized_value.casefold().split())
 
     def _load(self) -> dict:
         """
@@ -235,34 +361,93 @@ class Registry:
         print("Archivo        : ENCONTRADO")
         print("Proceso        : Leyendo registros...")
 
-        with REGISTRY_FILE.open(
-            "r",
-            encoding="utf-8",
-        ) as file:
+        try:
 
-            try:
+            with REGISTRY_FILE.open(
+                "r",
+                encoding="utf-8",
+            ) as file:
 
                 data = json.load(
                     file,
                 )
 
-                print("Lectura        : COMPLETADA")
-                print(f"Registros      : {len(data)}")
-                print("Estado         : REGISTRY CARGADO CORRECTAMENTE")
-                print("=" * 100)
+            if not isinstance(
+                data,
+                dict,
+            ):
+                raise ValueError(
+                    "El contenido del Registry debe ser un objeto JSON.",
+                )
 
-                return data
+            print("Lectura        : COMPLETADA")
+            print(f"Registros      : {len(data)}")
+            print("Estado         : REGISTRY CARGADO CORRECTAMENTE")
+            print("=" * 100)
 
-            except json.JSONDecodeError:
+            return data
 
-                print()
-                print("!" * 100)
-                print("ERROR DE LECTURA DEL REGISTRY")
-                print("!" * 100)
-                print(f"Archivo        : {REGISTRY_FILE.name}")
-                print("Motivo         : El contenido JSON no es válido.")
-                print("Resultado      : Se utilizará un Registry vacío.")
-                print("Registros      : 0")
-                print("!" * 100)
+        except (
+            json.JSONDecodeError,
+            OSError,
+            ValueError,
+        ) as error:
+            raise RuntimeError(
+                "El Registry está dañado. "
+                "La ejecución se ha detenido para evitar duplicar cantidades."
+            ) from error
 
-                return {}
+    def _parse_delivery_date(
+        self,
+        delivery_date: str | date | datetime,
+    ) -> datetime:
+        """
+        Convierte la fecha de una entrega a datetime.
+
+        Args:
+            delivery_date: Fecha de la entrega.
+
+        Returns:
+            Fecha convertida a datetime.
+        """
+
+        if isinstance(
+            delivery_date,
+            datetime,
+        ):
+            return delivery_date
+
+        if isinstance(
+            delivery_date,
+            date,
+        ):
+            return datetime.combine(
+                delivery_date,
+                datetime.min.time(),
+            )
+
+        normalized_date = str(
+            delivery_date,
+        ).strip()
+
+        accepted_formats = (
+            "%d/%m/%Y",
+            "%Y-%m-%d",
+            "%d-%m-%Y",
+        )
+
+        for date_format in accepted_formats:
+
+            try:
+
+                return datetime.strptime(
+                    normalized_date,
+                    date_format,
+                )
+
+            except ValueError:
+                continue
+
+        raise ValueError(
+            f"Formato de fecha no válido: {delivery_date}",
+        )

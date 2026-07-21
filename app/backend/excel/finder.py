@@ -30,9 +30,10 @@ class ExcelFinder:
     def build_product_index(
         self,
         worksheet: Worksheet,
-    ) -> dict[int, int]:
+    ) -> dict[str, int]:
         """
-        Construye un índice de productos.
+        Construye un índice que relaciona cada código de producto
+        con su fila correspondiente.
         """
 
         print()
@@ -40,13 +41,12 @@ class ExcelFinder:
         print("CONSTRUCCIÓN DEL ÍNDICE DE PRODUCTOS")
         print("-" * 100)
 
-        index: dict[int, int] = {}
+        index: dict[str, int] = {}
 
         for row in range(
             FIRST_PRODUCT_ROW,
             worksheet.max_row + 1,
         ):
-
             value = worksheet.cell(
                 row=row,
                 column=PRODUCT_CODE_COLUMN,
@@ -55,11 +55,9 @@ class ExcelFinder:
             if value is None:
                 continue
 
-            try:
+            code = str(value).strip()
 
-                code = int(value)
-
-            except (TypeError, ValueError):
+            if not code:
                 continue
 
             index[code] = row
@@ -71,19 +69,6 @@ class ExcelFinder:
         print("-" * 100)
 
         return index
-
-    def find_product(
-        self,
-        product_index: dict[int, int],
-        product_code: int,
-    ) -> int | None:
-        """
-        Devuelve la fila correspondiente a un código de artículo.
-        """
-
-        return product_index.get(
-            product_code,
-        )
 
     def find_day_column(
         self,
@@ -103,10 +88,10 @@ class ExcelFinder:
 
         column = FIRST_DAY_COLUMN + (day - 1)
 
-        print(f"Día del albarán : {day}")
-        print(f"Fila cabecera   : {DAY_HEADER_ROW}")
-        print(f"Columna Excel   : {column}")
-        print("Estado          : COLUMNA LOCALIZADA")
+        print(f"Día del movimiento : {day}")
+        print(f"Fila cabecera      : {DAY_HEADER_ROW}")
+        print(f"Columna Excel      : {column}")
+        print("Estado             : COLUMNA LOCALIZADA")
         print("-" * 100)
 
         return column

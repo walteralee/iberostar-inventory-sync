@@ -19,7 +19,14 @@ from pathlib import Path
 # PROJECT
 # ==========================================================
 
-ROOT_DIR = Path(__file__).resolve().parents[3]
+# backend/
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+
+# app/
+APP_DIR = BACKEND_DIR.parent
+
+# raíz del proyecto
+ROOT_DIR = APP_DIR.parent
 
 # ==========================================================
 # STORAGE
@@ -49,10 +56,14 @@ REGISTRY_FILE = REGISTRY_DIR / "imported_deliveries.json"
 # CREATE DIRECTORIES
 # ==========================================================
 
-MONTHLY_EXCELS_DIR.mkdir(parents=True, exist_ok=True)
-
-TEMPLATES_DIR.mkdir(parents=True, exist_ok=True)
-BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-LOGS_DIR.mkdir(parents=True, exist_ok=True)
-
-REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
+for directory in (
+    MONTHLY_EXCELS_DIR,
+    TEMPLATES_DIR,
+    BACKUP_DIR,
+    LOGS_DIR,
+    REGISTRY_DIR,
+):
+    directory.mkdir(
+        parents=True,
+        exist_ok=True,
+    )

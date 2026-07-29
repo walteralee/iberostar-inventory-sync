@@ -10,6 +10,8 @@ Descripción:
     mensuales.
 """
 
+from math import isfinite
+
 from openpyxl.worksheet.worksheet import Worksheet
 
 
@@ -38,8 +40,8 @@ class ExcelWriter:
             quantity: Cantidad que debe añadirse.
 
         Raises:
-            ValueError: Si la fila, la columna, la cantidad
-                o el valor actual de la celda no son válidos.
+            ValueError:
+                Si alguno de los datos no es válido.
         """
 
         self._validate_arguments(
@@ -55,23 +57,13 @@ class ExcelWriter:
 
         current_value = cell.value
 
-        if current_value in (
-            None,
-            "",
-        ):
+        if current_value in (None, ""):
             current_value = 0
 
-        if not isinstance(
+        current_value = self._validate_numeric_value(
             current_value,
-            (
-                int,
-                float,
-            ),
-        ):
-            raise ValueError(
-                f"La celda {cell.coordinate} contiene "
-                f"un valor no numérico: {current_value!r}"
-            )
+            f"La celda {cell.coordinate}",
+        )
 
         print(f"{'':18}│ Fila destino            : {row}")
         print(f"{'':18}│ Columna destino         : {column}")
@@ -91,14 +83,6 @@ class ExcelWriter:
     ) -> None:
         """
         Valida los argumentos de escritura.
-
-        Args:
-            row: Fila destino.
-            column: Columna destino.
-            quantity: Cantidad que debe escribirse.
-
-        Raises:
-            ValueError: Si alguno de los argumentos no es válido.
         """
 
         if not isinstance(row, int) or row < 1:
@@ -107,11 +91,37 @@ class ExcelWriter:
         if not isinstance(column, int) or column < 1:
             raise ValueError(f"Columna inválida: {column}")
 
-        if isinstance(quantity, bool) or not isinstance(
+        self._validate_numeric_value(
             quantity,
-            (
-                int,
-                float,
-            ),
+            "La cantidad",
+        )
+
+    def _validate_numeric_value(
+        self,
+        value: object,
+        field_name: str,
+    ) -> float:
+        """
+        Valida un valor numérico.
+
+        Rechaza:
+
+        - None
+        - bool
+        - texto
+        - NaN
+        - infinito
+        """
+
+        if isinstance(value, bool) or not isinstance(
+            value,
+            (int, float),
         ):
-            raise ValueError("La cantidad debe ser numérica.")
+            raise ValueError(f"{field_name} debe ser numérica.")
+
+        value = float(value)
+
+        if not isfinite(value):
+            raise ValueError(f"{field_name} contiene un número no válido.")
+
+        return value

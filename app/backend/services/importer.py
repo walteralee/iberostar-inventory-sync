@@ -13,13 +13,20 @@ Descripción:
     Cada grupo se transforma en una entrega con sus productos.
 """
 
+from __future__ import annotations
+
 from datetime import date, datetime
+from math import isclose, isfinite
 from pathlib import Path
 from tkinter import Tk, filedialog
+from typing import Iterable
+from zipfile import BadZipFile
 import re
 import unicodedata
 
 from openpyxl.utils.datetime import from_excel
+from openpyxl.utils.exceptions import InvalidFileException
+from openpyxl.worksheet.worksheet import Worksheet
 
 from config.constants import (
     SALES_POINT_MAPPING,
@@ -47,21 +54,42 @@ class Importer:
     """
     Importa movimientos desde los Excel de Economato y los
     convierte en entregas agrupadas por fecha y punto de venta.
+
+    El servicio:
+        1. Selecciona o recibe los Excel de origen.
+        2. Valida y procesa cada archivo de forma independiente.
+        3. Agrupa productos por fecha y punto de venta.
+        4. Construye las entregas.
+        5. Consulta y actualiza el registro de sincronización.
     """
+
+    _ZERO_TOLERANCE = 1e-9
+
+    _EXPECTED_FILE_ERRORS = (
+        OSError,
+        ValueError,
+        TypeError,
+        OverflowError,
+        BadZipFile,
+        InvalidFileException,
+    )
 
     def __init__(
         self,
         registry: Registry,
+        source_reader: SourceReader | None = None,
     ) -> None:
         """
         Inicializa los servicios necesarios para la importación.
 
         Args:
             registry: Registro compartido de entregas.
+            source_reader: Lector de Excel opcional. Permite inyectar
+                una implementación alternativa durante las pruebas.
         """
 
         self.registry = registry
-        self.source_reader = SourceReader()
+        self.source_reader = source_reader or SourceReader()
 
         self._sales_point_mapping = {
             self._normalize_lookup_text(source_name): target_name
@@ -76,60 +104,37 @@ class Importer:
             SOURCE_SALES_POINT_PREFIX,
         )
 
-    def run(self) -> list[Delivery]:
+    def run(
+        self,
+        excel_files: Iterable[Path | str] | Path | str | None = None,
+    ) -> list[Delivery]:
         """
         Ejecuta el proceso completo de importación.
+
+        Args:
+            excel_files: Archivos que se deben procesar. Cuando no se
+                proporcionan, se abre el explorador de archivos.
 
         Returns:
             Entregas nuevas o pendientes de sincronización.
         """
 
-        # ==================================================
-        # SELECCIÓN DE ARCHIVOS
-        # ==================================================
+        self._print_section("1. SELECCIÓN DE ARCHIVOS EXCEL")
 
-        print()
-        print("=" * 100)
-        print("1. SELECCIÓN DE ARCHIVOS EXCEL")
-        print("=" * 100)
-        print("Abriendo el explorador de archivos...")
-        print("=" * 100)
+        if excel_files is None:
+            print("Abriendo el explorador de archivos...")
+            selected_files = self._select_excel_files()
+        else:
+            selected_files = self._normalize_file_paths(excel_files)
 
-        excel_files = self._select_excel_files()
-
-        if not excel_files:
-
-            print()
-            print("!" * 100)
-            print("SELECCIÓN CANCELADA")
-            print("!" * 100)
-            print("No se seleccionó ningún archivo Excel.")
-            print("No hay archivos para importar.")
-            print("!" * 100)
-
+        if not selected_files:
+            self._print_cancelled_selection()
             return []
 
-        # ==================================================
-        # LISTA DE ARCHIVOS
-        # ==================================================
+        self._print_selected_files(selected_files)
 
-        print()
-        print("=" * 100)
-        print("2. LISTA DE EXCEL ENCONTRADOS")
-        print("=" * 100)
-
-        for index, excel_file in enumerate(
-            excel_files,
-            start=1,
-        ):
-            print(f"{index:03d} | {excel_file.name}")
-
-        print("-" * 100)
-        print(f"Total de Excel seleccionados: {len(excel_files)}")
-        print("=" * 100)
-
-        # La agrupación se realiza de forma global para que dos archivos
-        # seleccionados puedan aportar movimientos a la misma entrega.
+        # La agrupación es global para permitir que varios archivos
+        # aporten movimientos a una misma entrega.
         grouped_products: dict[
             tuple[date, str],
             dict[str, Product],
@@ -145,77 +150,66 @@ class Importer:
         ignored_zero_quantity_count = 0
         row_error_count = 0
 
-        # ==================================================
-        # PROCESAMIENTO DE CADA EXCEL
-        # ==================================================
-
-        print()
-        print("=" * 100)
-        print("3. PROCESAMIENTO DE LOS EXCEL")
-        print("=" * 100)
+        self._print_section("3. PROCESAMIENTO DE LOS EXCEL")
 
         for file_index, excel_file in enumerate(
-            excel_files,
+            selected_files,
             start=1,
         ):
+            worksheet: Worksheet | None = None
 
-            worksheet = None
+            # Cada archivo se procesa primero en una agrupación temporal.
+            # Así, un error fatal no deja datos parciales del archivo dentro
+            # de la importación global.
+            file_grouped_products: dict[
+                tuple[date, str],
+                dict[str, Product],
+            ] = {}
+
+            file_rows_read = 0
+            file_valid_rows = 0
+            file_ignored_group_count = 0
+            file_ignored_sales_point_count = 0
+            file_ignored_zero_quantity_count = 0
+            file_row_errors = 0
 
             try:
-
-                print()
-                print("-" * 100)
-                print(
-                    f"EXCEL {file_index:03d} DE {len(excel_files):03d}"
-                    f" | {excel_file.name}"
-                )
-                print("-" * 100)
-
-                worksheet = self.source_reader.read(
-                    excel_file,
+                self._print_file_header(
+                    file_index=file_index,
+                    total_files=len(selected_files),
+                    excel_file=excel_file,
                 )
 
-                self._validate_worksheet(
-                    worksheet.max_column,
-                )
+                worksheet = self.source_reader.read(excel_file)
+                self._validate_worksheet(worksheet)
 
-                print(f"Hoja abierta    : {worksheet.title}")
-                print(f"Filas detectadas: {worksheet.max_row}")
-                print(f"Columnas        : {worksheet.max_column}")
+                print(f"Hoja abierta     : {worksheet.title}")
+                print(f"Filas detectadas : {worksheet.max_row}")
+                print(f"Columnas         : {worksheet.max_column}")
                 print("Proceso          : Leyendo movimientos...")
                 print("-" * 100)
-
-                file_rows_read = 0
-                file_valid_rows = 0
-                file_row_errors = 0
 
                 for row_number in range(
                     SOURCE_HEADER_ROW + 1,
                     worksheet.max_row + 1,
                 ):
-
                     row_values = self._read_source_row(
                         worksheet=worksheet,
                         row_number=row_number,
                     )
 
-                    if self._is_empty_row(
-                        row_values,
-                    ):
+                    if self._is_empty_row(row_values):
                         continue
 
                     file_rows_read += 1
-                    total_rows_read += 1
 
                     try:
-
                         product_group = self._normalize_lookup_text(
                             row_values["group"],
                         )
 
                         if product_group not in self._valid_product_groups:
-
-                            ignored_group_count += 1
+                            file_ignored_group_count += 1
                             continue
 
                         sales_point = self._parse_sales_point(
@@ -223,12 +217,12 @@ class Importer:
                         )
 
                         if sales_point is None:
-
-                            ignored_sales_point_count += 1
+                            file_ignored_sales_point_count += 1
                             continue
 
                         delivery_date = self._parse_date(
-                            row_values["date"],
+                            value=row_values["date"],
+                            worksheet=worksheet,
                         )
 
                         product = self._parse_product(
@@ -239,187 +233,120 @@ class Importer:
                             quantity_value=row_values["quantity"],
                         )
 
-                        if product.quantity == 0:
-
-                            ignored_zero_quantity_count += 1
+                        if self._is_zero(product.quantity):
+                            file_ignored_zero_quantity_count += 1
                             continue
 
                         self._add_product(
-                            grouped_products=grouped_products,
+                            grouped_products=file_grouped_products,
                             delivery_date=delivery_date,
                             sales_point=sales_point,
                             product=product,
+                            source_description=(
+                                f"{excel_file.name}, fila {row_number}"
+                            ),
                         )
 
                         file_valid_rows += 1
-                        valid_row_count += 1
 
-                    except (TypeError, ValueError) as error:
-
+                    except (TypeError, ValueError, OverflowError) as error:
                         file_row_errors += 1
-                        row_error_count += 1
 
                         print(
                             f"Fila {row_number:05d} | "
                             f"IGNORADA | {type(error).__name__}: {error}"
                         )
 
+                # Solo se incorporan los datos del archivo a la agrupación
+                # global cuando el procesamiento termina correctamente.
+                self._merge_grouped_products(
+                    target=grouped_products,
+                    source=file_grouped_products,
+                    source_description=excel_file.name,
+                )
+
                 processed_file_count += 1
+                total_rows_read += file_rows_read
+                valid_row_count += file_valid_rows
+                ignored_group_count += file_ignored_group_count
+                ignored_sales_point_count += file_ignored_sales_point_count
+                ignored_zero_quantity_count += file_ignored_zero_quantity_count
+                row_error_count += file_row_errors
 
-                print("-" * 100)
-                print(f"Filas leídas     : {file_rows_read}")
-                print(f"Filas válidas    : {file_valid_rows}")
-                print(f"Errores de fila  : {file_row_errors}")
-                print("Estado            : EXCEL PROCESADO")
-                print("-" * 100)
+                self._print_file_summary(
+                    file_rows_read=file_rows_read,
+                    file_valid_rows=file_valid_rows,
+                    file_row_errors=file_row_errors,
+                )
 
-            except Exception as error:
-
+            except self._EXPECTED_FILE_ERRORS as error:
                 file_error_count += 1
 
-                print()
-                print("!" * 100)
-                print(f"ERROR DURANTE EL PROCESAMIENTO DEL EXCEL {file_index:03d}")
-                print("!" * 100)
-                print(f"Archivo : {excel_file.name}")
-                print(f"Tipo    : {type(error).__name__}")
-                print(f"Motivo  : {error}")
-                print("!" * 100)
+                self._print_expected_file_error(
+                    file_index=file_index,
+                    excel_file=excel_file,
+                    error=error,
+                )
+
+            except Exception as error:
+                # Un error inesperado suele señalar un fallo de programación.
+                # Se muestra el contexto y se propaga para no ocultarlo.
+                self._print_unexpected_file_error(
+                    file_index=file_index,
+                    excel_file=excel_file,
+                    error=error,
+                )
+                raise
 
             finally:
-
                 if worksheet is not None:
                     worksheet.parent.close()
 
-        # ==================================================
-        # CONSTRUCCIÓN DE ENTREGAS
-        # ==================================================
+        self._print_section("4. CONSTRUCCIÓN DE LAS ENTREGAS")
 
-        print()
-        print("=" * 100)
-        print("4. CONSTRUCCIÓN DE LAS ENTREGAS")
-        print("=" * 100)
+        deliveries = self._build_deliveries(grouped_products)
 
-        deliveries = self._build_deliveries(
-            grouped_products,
-        )
-
-        print(f"Grupos encontrados : {len(grouped_products)}")
+        print(f"Grupos encontrados  : {len(grouped_products)}")
         print(f"Entregas construidas: {len(deliveries)}")
         print("=" * 100)
 
-        # ==================================================
-        # COMPROBACIÓN DEL REGISTRY
-        # ==================================================
+        self._print_section("5. COMPROBACIÓN DEL REGISTRY")
 
-        print()
-        print("=" * 100)
-        print("5. COMPROBACIÓN DEL REGISTRY")
-        print("=" * 100)
+        (
+            imported_deliveries,
+            imported_count,
+            pending_count,
+            existing_count,
+        ) = self._filter_deliveries_with_registry(deliveries)
 
-        imported_deliveries: list[Delivery] = []
-
-        imported_count = 0
-        pending_count = 0
-        existing_count = 0
-
-        for delivery_index, delivery in enumerate(
-            deliveries,
-            start=1,
-        ):
-
-            print()
-            print("-" * 100)
-            print(f"ENTREGA {delivery_index:03d} " f"DE {len(deliveries):03d}")
-            print("-" * 100)
-            print("Fecha          : " f"{delivery.delivery_date.strftime('%d/%m/%Y')}")
-            print(f"Punto de venta : {delivery.sales_point.name}")
-            print(f"Productos      : {len(delivery.products)}")
-
-            if self.registry.exists(
-                delivery,
-            ):
-
-                if self.registry.is_synchronized(
-                    delivery,
-                ):
-
-                    existing_count += 1
-
-                    print("Registry       : YA REGISTRADA")
-                    print("Sincronización : COMPLETADA")
-                    print("Resultado      : ENTREGA OMITIDA")
-                    print("-" * 100)
-
-                    continue
-
-                pending_count += 1
-
-                imported_deliveries.append(
-                    delivery,
-                )
-
-                print("Registry       : YA REGISTRADA")
-                print("Sincronización : PENDIENTE")
-                print("Resultado      : ENTREGA RECUPERADA")
-                print("-" * 100)
-
-                continue
-
-            self.registry.register(
-                delivery,
-            )
-
-            imported_deliveries.append(
-                delivery,
-            )
-
-            imported_count += 1
-
-        # ==================================================
-        # GUARDADO DEL REGISTRY
-        # ==================================================
-
-        print()
-        print("=" * 100)
-        print("6. GUARDADO DEL REGISTRY")
-        print("=" * 100)
+        self._print_section("6. GUARDADO DEL REGISTRY")
 
         self.registry.save()
 
         print("Estado: GUARDADO CORRECTAMENTE")
         print("=" * 100)
 
-        # ==================================================
-        # RESUMEN
-        # ==================================================
-
-        print()
-        print("=" * 100)
-        print("7. RESUMEN DE IMPORTACIÓN")
-        print("=" * 100)
-        print(f"Excel seleccionados       : {len(excel_files)}")
-        print(f"Excel procesados          : {processed_file_count}")
-        print(f"Excel con errores         : {file_error_count}")
-        print("-" * 100)
-        print(f"Filas leídas              : {total_rows_read}")
-        print(f"Filas válidas             : {valid_row_count}")
-        print(f"Grupos no admitidos       : {ignored_group_count}")
-        print(f"Puntos de venta ignorados : {ignored_sales_point_count}")
-        print(f"Cantidades a cero         : {ignored_zero_quantity_count}")
-        print(f"Filas con errores         : {row_error_count}")
-        print("-" * 100)
-        print(f"Entregas construidas      : {len(deliveries)}")
-        print(f"Entregas nuevas           : {imported_count}")
-        print(f"Entregas pendientes       : {pending_count}")
-        print(f"Ya sincronizadas          : {existing_count}")
-        print(f"Entregas para sincronizar : {len(imported_deliveries)}")
-        print("=" * 100)
+        self._print_import_summary(
+            selected_file_count=len(selected_files),
+            processed_file_count=processed_file_count,
+            file_error_count=file_error_count,
+            total_rows_read=total_rows_read,
+            valid_row_count=valid_row_count,
+            ignored_group_count=ignored_group_count,
+            ignored_sales_point_count=ignored_sales_point_count,
+            ignored_zero_quantity_count=ignored_zero_quantity_count,
+            row_error_count=row_error_count,
+            delivery_count=len(deliveries),
+            imported_count=imported_count,
+            pending_count=pending_count,
+            existing_count=existing_count,
+            synchronization_count=len(imported_deliveries),
+        )
 
         return imported_deliveries
 
     # ======================================================
-    # PRIVATE
+    # FILE PROCESSING
     # ======================================================
 
     def _select_excel_files(self) -> list[Path]:
@@ -430,12 +357,8 @@ class Importer:
         root = Tk()
 
         try:
-
             root.withdraw()
-            root.attributes(
-                "-topmost",
-                True,
-            )
+            root.attributes("-topmost", True)
 
             files = filedialog.askopenfilenames(
                 title="Seleccionar archivos Excel de Economato",
@@ -448,40 +371,87 @@ class Importer:
             )
 
         finally:
-
             root.destroy()
 
-        return sorted(Path(file) for file in files)
+        return self._normalize_file_paths(files)
+
+    def _normalize_file_paths(
+        self,
+        files: Iterable[Path | str] | Path | str,
+    ) -> list[Path]:
+        """
+        Normaliza, elimina duplicados y ordena las rutas seleccionadas.
+        """
+
+        unique_files: dict[str, Path] = {}
+
+        if isinstance(files, (str, Path)):
+            files = [files]
+
+        for file in files:
+            path = Path(file).expanduser()
+            key = str(path.resolve(strict=False)).casefold()
+            unique_files.setdefault(key, path)
+
+        return sorted(
+            unique_files.values(),
+            key=lambda path: str(path).casefold(),
+        )
 
     def _validate_worksheet(
         self,
-        max_column: int,
+        worksheet: Worksheet,
     ) -> None:
         """
-        Comprueba que la hoja contiene todas las columnas necesarias.
+        Comprueba que la hoja tiene estructura suficiente para importarse.
         """
 
-        required_last_column = max(
-            SOURCE_DATE_COLUMN,
-            SOURCE_SALES_POINT_COLUMN,
-            SOURCE_GROUP_COLUMN,
-            SOURCE_PRODUCT_CODE_COLUMN,
-            SOURCE_PRODUCT_NAME_COLUMN,
-            SOURCE_FORMAT_COLUMN,
-            SOURCE_QUANTITY_COLUMN,
-            SOURCE_PRICE_COLUMN,
-        )
+        required_columns = {
+            "fecha": SOURCE_DATE_COLUMN,
+            "punto de venta": SOURCE_SALES_POINT_COLUMN,
+            "grupo": SOURCE_GROUP_COLUMN,
+            "código de producto": SOURCE_PRODUCT_CODE_COLUMN,
+            "nombre del producto": SOURCE_PRODUCT_NAME_COLUMN,
+            "formato": SOURCE_FORMAT_COLUMN,
+            "cantidad": SOURCE_QUANTITY_COLUMN,
+            "precio": SOURCE_PRICE_COLUMN,
+        }
 
-        if max_column < required_last_column:
+        required_last_column = max(required_columns.values())
+
+        if worksheet.max_column < required_last_column:
             raise ValueError(
                 "El Excel no contiene todas las columnas necesarias. "
                 f"Se requieren al menos {required_last_column} columnas "
-                f"y se encontraron {max_column}."
+                f"y se encontraron {worksheet.max_column}."
+            )
+
+        if worksheet.max_row <= SOURCE_HEADER_ROW:
+            raise ValueError(
+                "El Excel no contiene filas de datos después de la cabecera."
+            )
+
+        empty_headers = [
+            field_name
+            for field_name, column in required_columns.items()
+            if self._is_blank(
+                worksheet.cell(
+                    row=SOURCE_HEADER_ROW,
+                    column=column,
+                ).value
+            )
+        ]
+
+        if empty_headers:
+            raise ValueError(
+                "Faltan cabeceras en las columnas configuradas: "
+                + ", ".join(empty_headers)
+                + "."
             )
 
     def _read_source_row(
         self,
-        worksheet,
+        worksheet: Worksheet,
         row_number: int,
     ) -> dict[str, object]:
         """
@@ -531,9 +501,11 @@ class Importer:
         Comprueba si todas las celdas relevantes están vacías.
         """
 
-        return all(
-            value is None or str(value).strip() == "" for value in row_values.values()
-        )
+        return all(self._is_blank(value) for value in row_values.values())
+
+    # ======================================================
+    # VALUE PARSING
+    # ======================================================
 
     def _parse_sales_point(
         self,
@@ -543,31 +515,26 @@ class Importer:
         Convierte el destino de Economato en un punto de venta interno.
         """
 
-        normalized_value = self._normalize_lookup_text(
-            value,
-        )
+        normalized_value = self._normalize_lookup_text(value)
 
-        if normalized_value.startswith(
+        if self._normalized_sales_point_prefix and normalized_value.startswith(
             self._normalized_sales_point_prefix,
         ):
             normalized_value = normalized_value[
                 len(self._normalized_sales_point_prefix) :
             ].strip()
 
-        mapped_name = self._sales_point_mapping.get(
-            normalized_value,
-        )
+        mapped_name = self._sales_point_mapping.get(normalized_value)
 
         if mapped_name is None:
             return None
 
-        return SalesPoint(
-            name=mapped_name,
-        )
+        return SalesPoint(name=mapped_name)
 
     def _parse_date(
         self,
         value: object,
+        worksheet: Worksheet,
     ) -> date:
         """
         Convierte el valor de fecha del Excel en un objeto date.
@@ -580,9 +547,14 @@ class Importer:
             return value
 
         if isinstance(value, (int, float)) and not isinstance(value, bool):
+            numeric_value = float(value)
+
+            if not isfinite(numeric_value):
+                raise ValueError(f"La fecha numérica no es válida: {value}")
 
             parsed_value = from_excel(
-                value,
+                numeric_value,
+                epoch=worksheet.parent.epoch,
             )
 
             if isinstance(parsed_value, datetime):
@@ -591,10 +563,7 @@ class Importer:
             if isinstance(parsed_value, date):
                 return parsed_value
 
-        normalized_value = self._require_text(
-            value,
-            "fecha",
-        )
+        normalized_value = self._require_text(value, "fecha")
 
         accepted_formats = (
             "%d/%m/%Y",
@@ -605,13 +574,11 @@ class Importer:
         )
 
         for date_format in accepted_formats:
-
             try:
                 return datetime.strptime(
                     normalized_value,
                     date_format,
                 ).date()
-
             except ValueError:
                 continue
 
@@ -630,9 +597,7 @@ class Importer:
         """
 
         return Product(
-            code=self._parse_product_code(
-                code_value,
-            ),
+            code=self._parse_product_code(code_value),
             name=self._require_text(
                 name_value,
                 "nombre del producto",
@@ -641,14 +606,8 @@ class Importer:
                 format_value,
                 "formato del producto",
             ),
-            price=self._parse_number(
-                price_value,
-                "precio",
-            ),
-            quantity=self._parse_number(
-                quantity_value,
-                "cantidad",
-            ),
+            price=self._parse_number(price_value, "precio"),
+            quantity=self._parse_number(quantity_value, "cantidad"),
         )
 
     def _parse_product_code(
@@ -656,7 +615,11 @@ class Importer:
         value: object,
     ) -> str:
         """
-        Normaliza un código de producto sin convertirlo a float.
+        Normaliza un código de producto numérico y conserva sus ceros
+        iniciales cuando el Excel lo proporciona como texto.
+
+        Esta regla coincide con la utilizada por ProductManager para
+        reconocer las filas de productos dentro de las plantillas.
         """
 
         if value is None or isinstance(value, bool):
@@ -666,11 +629,12 @@ class Importer:
             return str(value)
 
         if isinstance(value, float):
+            if not isfinite(value) or not value.is_integer():
+                raise ValueError(
+                    f"El código del producto debe ser un número entero: {value}"
+                )
 
-            if value.is_integer():
-                return str(int(value))
-
-            return format(value, "g")
+            return str(int(value))
 
         normalized_value = str(value).strip()
 
@@ -680,6 +644,11 @@ class Importer:
         if re.fullmatch(r"\d+\.0+", normalized_value):
             normalized_value = normalized_value.split(".", maxsplit=1)[0]
 
+        if not normalized_value.isdigit():
+            raise ValueError(
+                "El código del producto debe contener únicamente dígitos: " f"{value}"
+            )
+
         return normalized_value
 
     def _parse_number(
@@ -688,44 +657,69 @@ class Importer:
         field_name: str,
     ) -> float:
         """
-        Convierte un valor numérico del Excel a float.
+        Convierte un valor numérico del Excel a float y rechaza valores
+        no finitos como NaN o infinito.
         """
 
         if isinstance(value, bool) or value is None:
             raise ValueError(f"El campo {field_name} no es numérico.")
 
         if isinstance(value, (int, float)):
-            return float(value)
+            parsed_value = float(value)
+
+            if not isfinite(parsed_value):
+                raise ValueError(
+                    f"El campo {field_name} contiene un número no válido: {value}"
+                )
+
+            return parsed_value
 
         normalized_value = str(value).strip()
 
         if not normalized_value:
             raise ValueError(f"El campo {field_name} está vacío.")
 
-        normalized_value = normalized_value.replace("€", "")
-        normalized_value = normalized_value.replace(" ", "")
+        normalized_value = (
+            normalized_value.replace("\u00a0", "").replace("€", "").replace(" ", "")
+        )
+
+        is_parenthesized_negative = normalized_value.startswith(
+            "("
+        ) and normalized_value.endswith(")")
+
+        if is_parenthesized_negative:
+            normalized_value = normalized_value[1:-1]
 
         if "," in normalized_value and "." in normalized_value:
-
             if normalized_value.rfind(",") > normalized_value.rfind("."):
                 normalized_value = normalized_value.replace(".", "")
                 normalized_value = normalized_value.replace(",", ".")
-
             else:
                 normalized_value = normalized_value.replace(",", "")
 
         elif "," in normalized_value:
             normalized_value = normalized_value.replace(",", ".")
 
-        try:
-            return float(
-                normalized_value,
-            )
+        if is_parenthesized_negative:
+            normalized_value = f"-{normalized_value}"
 
+        try:
+            parsed_value = float(normalized_value)
         except ValueError as error:
             raise ValueError(
                 f"El campo {field_name} no es numérico: {value}"
             ) from error
+
+        if not isfinite(parsed_value):
+            raise ValueError(
+                f"El campo {field_name} contiene un número no válido: {value}"
+            )
+
+        return parsed_value
+
+    # ======================================================
+    # GROUPING AND DELIVERY BUILDING
+    # ======================================================
 
     def _add_product(
         self,
@@ -733,9 +727,13 @@ class Importer:
         delivery_date: date,
         sales_point: SalesPoint,
         product: Product,
+        source_description: str = "origen desconocido",
     ) -> None:
         """
         Añade o acumula un producto dentro de su entrega.
+
+        Cuando un mismo código presenta datos descriptivos distintos,
+        se informa de la discrepancia y se conservan los datos más recientes.
         """
 
         delivery_key = (
@@ -743,26 +741,66 @@ class Importer:
             sales_point.name,
         )
 
-        products = grouped_products.setdefault(
-            delivery_key,
-            {},
-        )
-
-        existing_product = products.get(
-            product.code,
-        )
+        products = grouped_products.setdefault(delivery_key, {})
+        existing_product = products.get(product.code)
 
         if existing_product is None:
-
             products[product.code] = product
             return
 
-        existing_product.quantity += product.quantity
+        differences: list[str] = []
 
-        # Los datos descriptivos más recientes sustituyen a los anteriores.
+        if existing_product.name != product.name:
+            differences.append("nombre")
+
+        if existing_product.format != product.format:
+            differences.append("formato")
+
+        if not isclose(
+            existing_product.price,
+            product.price,
+            rel_tol=0.0,
+            abs_tol=self._ZERO_TOLERANCE,
+        ):
+            differences.append("precio")
+
+        if differences:
+            print(
+                "ADVERTENCIA | "
+                f"Código {product.code}: cambian "
+                f"{', '.join(differences)} en {source_description}. "
+                "Se conservarán los datos más recientes."
+            )
+
+        existing_product.quantity += product.quantity
         existing_product.name = product.name
         existing_product.format = product.format
         existing_product.price = product.price
+
+    def _merge_grouped_products(
+        self,
+        target: dict[tuple[date, str], dict[str, Product]],
+        source: dict[tuple[date, str], dict[str, Product]],
+        source_description: str,
+    ) -> None:
+        """
+        Incorpora una agrupación procesada correctamente a la global.
+        """
+
+        for (
+            delivery_date,
+            sales_point_name,
+        ), products_by_code in source.items():
+            sales_point = SalesPoint(name=sales_point_name)
+
+            for product in products_by_code.values():
+                self._add_product(
+                    grouped_products=target,
+                    delivery_date=delivery_date,
+                    sales_point=sales_point,
+                    product=product,
+                    source_description=source_description,
+                )
 
     def _build_deliveries(
         self,
@@ -781,17 +819,19 @@ class Importer:
             grouped_products.items(),
             key=lambda item: (
                 item[0][0],
-                item[0][1],
+                item[0][1].casefold(),
             ),
         ):
-
             products = sorted(
                 (
                     product
                     for product in products_by_code.values()
-                    if product.quantity != 0
+                    if not self._is_zero(product.quantity)
                 ),
-                key=lambda product: product.code,
+                key=lambda product: (
+                    int(product.code),
+                    product.code,
+                ),
             )
 
             if not products:
@@ -799,15 +839,78 @@ class Importer:
 
             deliveries.append(
                 Delivery(
-                    sales_point=SalesPoint(
-                        name=sales_point_name,
-                    ),
+                    sales_point=SalesPoint(name=sales_point_name),
                     delivery_date=delivery_date,
                     products=products,
                 )
             )
 
         return deliveries
+
+    # ======================================================
+    # REGISTRY
+    # ======================================================
+
+    def _filter_deliveries_with_registry(
+        self,
+        deliveries: list[Delivery],
+    ) -> tuple[list[Delivery], int, int, int]:
+        """
+        Clasifica las entregas como nuevas, pendientes o sincronizadas.
+        """
+
+        imported_deliveries: list[Delivery] = []
+        imported_count = 0
+        pending_count = 0
+        existing_count = 0
+
+        for delivery_index, delivery in enumerate(deliveries, start=1):
+            print()
+            print("-" * 100)
+            print(f"ENTREGA {delivery_index:03d} " f"DE {len(deliveries):03d}")
+            print("-" * 100)
+            print("Fecha          : " f"{delivery.delivery_date.strftime('%d/%m/%Y')}")
+            print(f"Punto de venta : {delivery.sales_point.name}")
+            print(f"Productos      : {len(delivery.products)}")
+
+            if self.registry.exists(delivery):
+                if self.registry.is_synchronized(delivery):
+                    existing_count += 1
+
+                    print("Registry       : YA REGISTRADA")
+                    print("Sincronización : COMPLETADA")
+                    print("Resultado      : ENTREGA OMITIDA")
+                    print("-" * 100)
+                    continue
+
+                pending_count += 1
+                imported_deliveries.append(delivery)
+
+                print("Registry       : YA REGISTRADA")
+                print("Sincronización : PENDIENTE")
+                print("Resultado      : ENTREGA RECUPERADA")
+                print("-" * 100)
+                continue
+
+            self.registry.register(delivery)
+            imported_deliveries.append(delivery)
+            imported_count += 1
+
+            print("Registry       : REGISTRADA")
+            print("Sincronización : PENDIENTE")
+            print("Resultado      : ENTREGA NUEVA")
+            print("-" * 100)
+
+        return (
+            imported_deliveries,
+            imported_count,
+            pending_count,
+            existing_count,
+        )
+
+    # ======================================================
+    # GENERIC HELPERS
+    # ======================================================
 
     def _require_text(
         self,
@@ -852,3 +955,144 @@ class Importer:
             for character in normalized_value
             if unicodedata.category(character) != "Mn"
         )
+
+    def _is_blank(self, value: object) -> bool:
+        """
+        Comprueba si un valor está vacío o solo contiene espacios.
+        """
+
+        return value is None or str(value).strip() == ""
+
+    def _is_zero(self, value: float) -> bool:
+        """
+        Compara cantidades con cero evitando residuos decimales mínimos.
+        """
+
+        return isclose(
+            value,
+            0.0,
+            rel_tol=0.0,
+            abs_tol=self._ZERO_TOLERANCE,
+        )
+
+    # ======================================================
+    # CONSOLE OUTPUT
+    # ======================================================
+
+    def _print_section(self, title: str) -> None:
+        print()
+        print("=" * 100)
+        print(title)
+        print("=" * 100)
+
+    def _print_cancelled_selection(self) -> None:
+        print()
+        print("!" * 100)
+        print("SELECCIÓN CANCELADA")
+        print("!" * 100)
+        print("No se seleccionó ningún archivo Excel.")
+        print("No hay archivos para importar.")
+        print("!" * 100)
+
+    def _print_selected_files(self, excel_files: list[Path]) -> None:
+        self._print_section("2. LISTA DE EXCEL ENCONTRADOS")
+
+        for index, excel_file in enumerate(excel_files, start=1):
+            print(f"{index:03d} | {excel_file.name}")
+
+        print("-" * 100)
+        print(f"Total de Excel seleccionados: {len(excel_files)}")
+        print("=" * 100)
+
+    def _print_file_header(
+        self,
+        file_index: int,
+        total_files: int,
+        excel_file: Path,
+    ) -> None:
+        print()
+        print("-" * 100)
+        print(f"EXCEL {file_index:03d} DE {total_files:03d}" f" | {excel_file.name}")
+        print("-" * 100)
+
+    def _print_file_summary(
+        self,
+        file_rows_read: int,
+        file_valid_rows: int,
+        file_row_errors: int,
+    ) -> None:
+        print("-" * 100)
+        print(f"Filas leídas     : {file_rows_read}")
+        print(f"Filas válidas    : {file_valid_rows}")
+        print(f"Errores de fila  : {file_row_errors}")
+        print("Estado           : EXCEL PROCESADO")
+        print("-" * 100)
+
+    def _print_expected_file_error(
+        self,
+        file_index: int,
+        excel_file: Path,
+        error: Exception,
+    ) -> None:
+        print()
+        print("!" * 100)
+        print(f"ERROR DURANTE EL PROCESAMIENTO DEL EXCEL {file_index:03d}")
+        print("!" * 100)
+        print(f"Archivo : {excel_file.name}")
+        print(f"Tipo    : {type(error).__name__}")
+        print(f"Motivo  : {error}")
+        print("Datos   : El archivo se descartó por completo")
+        print("!" * 100)
+
+    def _print_unexpected_file_error(
+        self,
+        file_index: int,
+        excel_file: Path,
+        error: Exception,
+    ) -> None:
+        print()
+        print("!" * 100)
+        print(f"ERROR INESPERADO EN EL EXCEL {file_index:03d}")
+        print("!" * 100)
+        print(f"Archivo : {excel_file.name}")
+        print(f"Tipo    : {type(error).__name__}")
+        print(f"Motivo  : {error}")
+        print("Acción  : El error se propagará para no ocultar un fallo interno")
+        print("!" * 100)
+
+    def _print_import_summary(
+        self,
+        selected_file_count: int,
+        processed_file_count: int,
+        file_error_count: int,
+        total_rows_read: int,
+        valid_row_count: int,
+        ignored_group_count: int,
+        ignored_sales_point_count: int,
+        ignored_zero_quantity_count: int,
+        row_error_count: int,
+        delivery_count: int,
+        imported_count: int,
+        pending_count: int,
+        existing_count: int,
+        synchronization_count: int,
+    ) -> None:
+        self._print_section("7. RESUMEN DE IMPORTACIÓN")
+
+        print(f"Excel seleccionados       : {selected_file_count}")
+        print(f"Excel procesados          : {processed_file_count}")
+        print(f"Excel con errores         : {file_error_count}")
+        print("-" * 100)
+        print(f"Filas leídas              : {total_rows_read}")
+        print(f"Filas válidas             : {valid_row_count}")
+        print(f"Grupos no admitidos       : {ignored_group_count}")
+        print(f"Puntos de venta ignorados : {ignored_sales_point_count}")
+        print(f"Cantidades a cero         : {ignored_zero_quantity_count}")
+        print(f"Filas con errores         : {row_error_count}")
+        print("-" * 100)
+        print(f"Entregas construidas      : {delivery_count}")
+        print(f"Entregas nuevas           : {imported_count}")
+        print(f"Entregas pendientes       : {pending_count}")
+        print(f"Ya sincronizadas          : {existing_count}")
+        print(f"Entregas para sincronizar : {synchronization_count}")
+        print("=" * 100)

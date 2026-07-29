@@ -33,6 +33,97 @@ class ProductManager:
     dentro del Excel.
     """
 
+    def find_or_create(
+        self,
+        worksheet: Worksheet,
+        product_index: dict[str, int],
+        product: Product,
+    ) -> tuple[int, bool]:
+        """
+        Devuelve la fila del producto y si ha sido creado.
+
+        Returns:
+            tuple[int, bool]:
+                - Número de fila.
+                - True si el producto fue creado.
+                - False si el producto ya existía.
+        """
+
+        product_code = product.code.strip()
+
+        if not product_code:
+            raise ValueError("El código del producto no puede estar vacío.")
+
+        row = product_index.get(
+            product_code,
+        )
+
+        # ==================================================
+        # PRODUCTO EXISTENTE
+        # ==================================================
+
+        if row is not None:
+            print(
+                f"Código: {product_code:<8} | "
+                f"EXISTENTE | "
+                f"Fila: {row:<5} | "
+                f"No se modifican sus datos"
+            )
+
+            return row, False
+
+        # ==================================================
+        # PRODUCTO NUEVO
+        # ==================================================
+
+        print(f"Código: {product_code:<8} | " f"NUEVO     | " f"Creando producto...")
+
+        row = self._insert_product_row(
+            worksheet,
+        )
+
+        print(f"{'':18}│ Fila insertada          : {row}")
+
+        self._copy_row_format(
+            worksheet,
+            row,
+        )
+
+        print(f"{'':18}│ Formato copiado         : SÍ")
+
+        self._fill_product_data(
+            worksheet,
+            row,
+            product,
+        )
+
+        print(f"{'':18}│ Código                  : {product_code}")
+        print(f"{'':18}│ Nombre                  : {product.name}")
+        print(f"{'':18}│ Stock actual            : 0")
+        print(f"{'':18}│ Formato                 : {product.format}")
+        print(f"{'':18}│ Precio                  : {product.price}")
+
+        self._copy_product_formulas(
+            worksheet,
+            row,
+        )
+
+        print(f"{'':18}│ Fórmulas adaptadas      : SÍ")
+
+        self._update_total_formulas(
+            worksheet,
+            row,
+        )
+
+        print(f"{'':18}│ Totales actualizados    : SÍ")
+
+        product_index[product_code] = row
+
+        print(f"{'':18}│ Índice actualizado      : SÍ")
+        print(f"{'':18}└─ Resultado               : PRODUCTO CREADO")
+
+        return row, True
+
     def _insert_product_row(
         self,
         worksheet: Worksheet,
@@ -198,98 +289,7 @@ class ProductManager:
 
             if source.has_style:
                 target.number_format = source.number_format
-
-    def find_or_create(
-        self,
-        worksheet: Worksheet,
-        product_index: dict[str, int],
-        product: Product,
-    ) -> tuple[int, bool]:
-        """
-        Devuelve la fila del producto y si ha sido creado.
-
-        Returns:
-            tuple[int, bool]:
-                - Número de fila.
-                - True si el producto fue creado.
-                - False si el producto ya existía.
-        """
-
-        product_code = product.code.strip()
-
-        if not product_code:
-            raise ValueError("El código del producto no puede estar vacío.")
-
-        row = product_index.get(
-            product_code,
-        )
-
-        # ==================================================
-        # PRODUCTO EXISTENTE
-        # ==================================================
-
-        if row is not None:
-            print(
-                f"Código: {product_code:<8} | "
-                f"EXISTENTE | "
-                f"Fila: {row:<5} | "
-                f"No se modifican sus datos"
-            )
-
-            return row, False
-
-        # ==================================================
-        # PRODUCTO NUEVO
-        # ==================================================
-
-        print(f"Código: {product_code:<8} | " f"NUEVO     | " f"Creando producto...")
-
-        row = self._insert_product_row(
-            worksheet,
-        )
-
-        print(f"{'':18}│ Fila insertada          : {row}")
-
-        self._copy_row_format(
-            worksheet,
-            row,
-        )
-
-        print(f"{'':18}│ Formato copiado         : SÍ")
-
-        self._fill_product_data(
-            worksheet,
-            row,
-            product,
-        )
-
-        print(f"{'':18}│ Código                  : {product_code}")
-        print(f"{'':18}│ Nombre                  : {product.name}")
-        print(f"{'':18}│ Stock actual            : 0")
-        print(f"{'':18}│ Formato                 : {product.format}")
-        print(f"{'':18}│ Precio                  : {product.price}")
-
-        self._copy_product_formulas(
-            worksheet,
-            row,
-        )
-
-        print(f"{'':18}│ Fórmulas adaptadas      : SÍ")
-
-        self._update_total_formulas(
-            worksheet,
-            row,
-        )
-
-        print(f"{'':18}│ Totales actualizados    : SÍ")
-
-        product_index[product_code] = row
-
-        print(f"{'':18}│ Índice actualizado      : SÍ")
-        print(f"{'':18}└─ Resultado               : PRODUCTO CREADO")
-
-        return row, True
-
+                
     def _fill_product_data(
         self,
         worksheet: Worksheet,

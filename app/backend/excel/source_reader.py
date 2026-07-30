@@ -32,9 +32,9 @@ class SourceReader:
     """
     Servicio encargado de abrir el Excel de origen.
 
-    No depende de la hoja activa del libro. Busca
-    automáticamente una hoja que contenga la estructura
-    mínima necesaria para que el Importer pueda procesarla.
+    No depende de la hoja activa ni del nombre exacto de las
+    cabeceras. Busca automáticamente la hoja que tenga las
+    dimensiones necesarias y mayor cantidad de datos útiles.
     """
 
     _REQUIRED_COLUMNS = (
@@ -59,27 +59,44 @@ class SourceReader:
             excel_file: Ruta del Excel de origen.
 
         Returns:
-            Hoja válida del Excel.
+            Hoja seleccionada para procesar los movimientos.
 
         Raises:
+            FileNotFoundError:
+                Si el archivo no existe.
+
             ValueError:
-                Si no existe ninguna hoja con la estructura mínima.
+                Si no se encuentra ninguna hoja con las
+                dimensiones mínimas necesarias.
         """
+
+        excel_file = Path(excel_file)
+
+        if not excel_file.is_file():
+            raise FileNotFoundError(f"No se encontró el Excel de origen: {excel_file}")
 
         workbook = load_workbook(
             filename=excel_file,
             data_only=True,
         )
 
-        for worksheet in workbook.worksheets:
-            if self._is_valid_source_sheet(worksheet):
-                return worksheet
+        compatible_worksheets = [
+            worksheet
+            for worksheet in workbook.worksheets
+            if self._is_valid_source_sheet(worksheet)
+        ]
 
-        workbook.close()
+        if not compatible_worksheets:
+            workbook.close()
 
-        raise ValueError(
-            "No se encontró ninguna hoja con la estructura mínima "
-            "necesaria para importar los movimientos de Economato."
+            raise ValueError(
+                "No se encontró ninguna hoja con las filas y columnas "
+                "necesarias para importar los movimientos de Economato."
+            )
+
+        return max(
+            compatible_worksheets,
+            key=self._calculate_sheet_score,
         )
 
     # ======================================================
@@ -91,38 +108,46 @@ class SourceReader:
         worksheet: Worksheet,
     ) -> bool:
         """
-        Comprueba si una hoja contiene las columnas y filas
-        mínimas necesarias para que pueda procesarla el Importer.
+        Comprueba únicamente que la hoja tenga las dimensiones
+        mínimas necesarias.
 
-        No compara el texto exacto de las cabeceras, ya que los
-        informes reales pueden utilizar nombres diferentes.
+        No valida el texto ni el contenido de las cabeceras,
+        porque los informes de Economato pueden utilizar nombres
+        diferentes o contener algunas cabeceras vacías.
         """
 
         required_last_column = max(self._REQUIRED_COLUMNS)
 
-        if worksheet.max_column < required_last_column:
-            return False
-
-        if worksheet.max_row <= SOURCE_HEADER_ROW:
-            return False
-
-        return all(
-            not self._is_blank(
-                worksheet.cell(
-                    row=SOURCE_HEADER_ROW,
-                    column=column,
-                ).value
-            )
-            for column in self._REQUIRED_COLUMNS
+        return (
+            worksheet.max_row > SOURCE_HEADER_ROW
+            and worksheet.max_column >= required_last_column
         )
 
-    def _is_blank(
+    def _calculate_sheet_score(
         self,
-        value: object,
-    ) -> bool:
+        worksheet: Worksheet,
+    ) -> int:
         """
-        Comprueba si una celda está vacía o contiene
-        únicamente espacios.
+        Calcula cuántos datos existen en las columnas configuradas.
+
+        Si el libro contiene varias hojas compatibles, se selecciona
+        la que tenga mayor cantidad de información en las columnas
+        utilizadas por el Importer.
         """
 
-        return value is None or str(value).strip() == ""
+        score = 0
+
+        for row in range(
+            SOURCE_HEADER_ROW + 1,
+            worksheet.max_row + 1,
+        ):
+            for column in self._REQUIRED_COLUMNS:
+                value = worksheet.cell(
+                    row=row,
+                    column=column,
+                ).value
+
+                if value is not None and str(value).strip():
+                    score += 1
+
+        return score

@@ -403,21 +403,26 @@ class Importer:
         worksheet: Worksheet,
     ) -> None:
         """
-        Comprueba que la hoja tiene estructura suficiente para importarse.
+        Comprueba que la hoja tiene las dimensiones suficientes
+        para poder procesarse.
+
+        No valida el contenido de las cabeceras porque los informes
+        reales de Economato pueden incluir nombres diferentes o
+        algunas cabeceras vacías.
         """
 
-        required_columns = {
-            "fecha": SOURCE_DATE_COLUMN,
-            "punto de venta": SOURCE_SALES_POINT_COLUMN,
-            "grupo": SOURCE_GROUP_COLUMN,
-            "código de producto": SOURCE_PRODUCT_CODE_COLUMN,
-            "nombre del producto": SOURCE_PRODUCT_NAME_COLUMN,
-            "formato": SOURCE_FORMAT_COLUMN,
-            "cantidad": SOURCE_QUANTITY_COLUMN,
-            "precio": SOURCE_PRICE_COLUMN,
-        }
+        required_columns = (
+            SOURCE_DATE_COLUMN,
+            SOURCE_SALES_POINT_COLUMN,
+            SOURCE_GROUP_COLUMN,
+            SOURCE_PRODUCT_CODE_COLUMN,
+            SOURCE_PRODUCT_NAME_COLUMN,
+            SOURCE_FORMAT_COLUMN,
+            SOURCE_QUANTITY_COLUMN,
+            SOURCE_PRICE_COLUMN,
+        )
 
-        required_last_column = max(required_columns.values())
+        required_last_column = max(required_columns)
 
         if worksheet.max_column < required_last_column:
             raise ValueError(
@@ -429,24 +434,6 @@ class Importer:
         if worksheet.max_row <= SOURCE_HEADER_ROW:
             raise ValueError(
                 "El Excel no contiene filas de datos después de la cabecera."
-            )
-
-        empty_headers = [
-            field_name
-            for field_name, column in required_columns.items()
-            if self._is_blank(
-                worksheet.cell(
-                    row=SOURCE_HEADER_ROW,
-                    column=column,
-                ).value
-            )
-        ]
-
-        if empty_headers:
-            raise ValueError(
-                "Faltan cabeceras en las columnas configuradas: "
-                + ", ".join(empty_headers)
-                + "."
             )
 
     def _read_source_row(

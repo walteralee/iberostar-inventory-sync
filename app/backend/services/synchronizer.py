@@ -23,14 +23,11 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
-import hashlib
-import json
 import math
 import os
 from pathlib import Path
 import shutil
 import traceback
-import unicodedata
 from uuid import uuid4
 
 from openpyxl import Workbook
@@ -49,6 +46,7 @@ from excel.writer import ExcelWriter
 
 from services.excel_template_manager import ExcelTemplateManager
 from services.registry import Registry
+from utils.delivery_identity import build_delivery_key, build_payload_hash
 
 
 @dataclass(slots=True)
@@ -212,8 +210,8 @@ class Synchronizer:
 
         sales_point_name = delivery.sales_point.name.strip()
         delivery_date = self._as_date(delivery.delivery_date)
-        delivery_key = self._build_delivery_key(delivery)
-        payload_hash = self._build_payload_hash(delivery)
+        delivery_key = build_delivery_key(delivery)
+        payload_hash = build_payload_hash(delivery)
 
         self._ensure_registered(delivery)
         self._print_delivery_header(
@@ -690,40 +688,6 @@ class Synchronizer:
 
         sync_sheet.sheet_state = "veryHidden"
 
-    def _build_payload_hash(
-        self,
-        delivery: Delivery,
-    ) -> str:
-        """Genera una huella estable del contenido completo de la entrega."""
-
-        products = sorted(
-            (
-                {
-                    "code": product.code.strip(),
-                    "name": self._normalize_payload_text(product.name),
-                    "format": self._normalize_payload_text(product.format),
-                    "price": self._canonical_number(product.price),
-                    "quantity": self._canonical_number(product.quantity),
-                }
-                for product in delivery.products
-            ),
-            key=lambda item: item["code"],
-        )
-
-        payload = {
-            "delivery_key": self._build_delivery_key(delivery),
-            "products": products,
-        }
-
-        serialized = json.dumps(
-            payload,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-
-        return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
-
     # ======================================================
     # REGISTRY
     # ======================================================
@@ -786,28 +750,14 @@ class Synchronizer:
         current_data.clear()
         current_data.update(snapshot)
 
-    def _build_delivery_key(
-        self,
-        delivery: Delivery,
-    ) -> str:
-        """Obtiene una clave compatible con el Registry actual."""
-
-        registry_builder = getattr(self.registry, "_build_delivery_key", None)
-
-        if callable(registry_builder):
-            return str(registry_builder(delivery))
-
-        delivery_date = self._as_date(delivery.delivery_date)
-        sales_point_name = self._normalize_key_text(delivery.sales_point.name)
-
-        if not sales_point_name:
-            raise ValueError("El punto de venta de la entrega está vacío.")
-
-        return f"{delivery_date.isoformat()}|{sales_point_name}"
-
     # ======================================================
     # SAFE FILE WRITING
     # ======================================================
+
+    # Cantidad de copias de seguridad que se conservan por archivo de
+    # origen. Las más antiguas se eliminan automáticamente al superar
+    # este número, ya que cada sincronización genera una copia nueva.
+    _BACKUP_RETENTION_COUNT = 15
 
     def _create_backup(
         self,
@@ -823,7 +773,7 @@ class Synchronizer:
                 f"No se puede crear el backup porque no existe: {source_path}"
             )
 
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
         backup_directory = BACKUP_DIR / category
         backup_directory.mkdir(parents=True, exist_ok=True)
 
@@ -832,7 +782,35 @@ class Synchronizer:
         )
 
         shutil.copy2(source_path, backup_path)
+
+        self._prune_old_backups(
+            backup_directory=backup_directory,
+            stem=source_path.stem,
+            suffix=source_path.suffix,
+        )
+
         return backup_path
+
+    def _prune_old_backups(
+        self,
+        backup_directory: Path,
+        stem: str,
+        suffix: str,
+    ) -> None:
+        """Elimina los backups más antiguos de un archivo por encima del límite."""
+
+        existing_backups = sorted(
+            backup_directory.glob(f"{stem}_*{suffix}"),
+            key=lambda path: path.name,
+        )
+
+        excess_count = len(existing_backups) - self._BACKUP_RETENTION_COUNT
+
+        if excess_count <= 0:
+            return
+
+        for old_backup in existing_backups[:excess_count]:
+            old_backup.unlink(missing_ok=True)
 
     def _atomic_save_workbook(
         self,
@@ -1020,50 +998,6 @@ class Synchronizer:
             return False
 
         return math.isfinite(numeric_value) and numeric_value == expected_day
-
-    # ======================================================
-    # NORMALIZATION
-    # ======================================================
-
-    def _normalize_key_text(
-        self,
-        value: object,
-    ) -> str:
-        """Replica la normalización utilizada por el Registry."""
-
-        normalized_value = unicodedata.normalize(
-            "NFKD",
-            str(value).strip(),
-        )
-
-        normalized_value = "".join(
-            character
-            for character in normalized_value
-            if not unicodedata.combining(character)
-        )
-
-        return " ".join(normalized_value.casefold().split())
-
-    def _normalize_payload_text(
-        self,
-        value: object,
-    ) -> str:
-        """Normaliza texto descriptivo para calcular una huella estable."""
-
-        return " ".join(str(value).strip().split())
-
-    def _canonical_number(
-        self,
-        value: int | float,
-    ) -> str:
-        """Genera una representación estable para números finitos."""
-
-        numeric_value = self._require_finite_number(value, "valor numérico")
-
-        if numeric_value == 0:
-            return "0"
-
-        return format(numeric_value, ".15g")
 
     def _safe_sales_point_name(
         self,

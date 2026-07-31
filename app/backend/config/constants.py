@@ -30,19 +30,17 @@ MANOLETE = "Manolete"
 STARCAFE = "Starcafe"
 GENERALES = "Generales"
 
-SALES_POINTS = (
-    BAR_PISCINA,
-    BAR_SALON,
-    COMEDOR,
-    MANOLETE,
-    STARCAFE,
-    GENERALES,
-)
-
 # ==========================================================
 # SOURCE EXCEL -> SALES POINT MAPPING
 # ==========================================================
 
+# NOTA: "TRACTORIA" no es una palabra estándar en español ni italiano
+# (¿"TRATTORIA"?). Se mantiene tal cual porque puede ser el nombre real
+# usado por Economato para este sub-outlet de Manolete; conviene
+# confirmarlo con el negocio. Si es un typo del origen, cualquier fila
+# que diga "TRATTORIA" quedará sin mapear (y quedará registrada en
+# storage/logs/importacion_incidencias.log en vez de perderse en
+# silencio).
 SALES_POINT_MAPPING = {
     "BAR PISCINA": BAR_PISCINA,
     "BAR SALÓN": BAR_SALON,
@@ -52,8 +50,6 @@ SALES_POINT_MAPPING = {
     "STARCAFÉ": STARCAFE,
     "GENERALES BAR Y COMEDOR": GENERALES,
 }
-
-VALID_SALES_POINTS = frozenset(SALES_POINT_MAPPING.keys())
 
 # ==========================================================
 # VALID PRODUCT GROUPS

@@ -29,7 +29,6 @@ import os
 from pathlib import Path
 import shutil
 from typing import Any
-import unicodedata
 from uuid import uuid4
 
 from config.constants import MONTHS
@@ -37,6 +36,13 @@ from config.settings import BACKUP_DIR, REGISTRY_FILE
 from models.delivery import Delivery
 from models.product import Product
 from models.sales_point import SalesPoint
+from utils.delivery_identity import (
+    build_delivery_key,
+    build_payload_hash,
+    canonical_number,
+    normalize_key_text,
+    normalize_payload_text,
+)
 
 
 class Registry:
@@ -166,7 +172,7 @@ class Registry:
         """
 
         normalized_delivery = self._validate_delivery(delivery)
-        delivery_key = self._build_delivery_key(normalized_delivery)
+        delivery_key = build_delivery_key(normalized_delivery)
         entry = self._data.get(delivery_key)
 
         if entry is None:
@@ -186,7 +192,7 @@ class Registry:
         """Devuelve ``True`` si la entrega existe y ya fue sincronizada."""
 
         normalized_delivery = self._validate_delivery(delivery)
-        delivery_key = self._build_delivery_key(normalized_delivery)
+        delivery_key = build_delivery_key(normalized_delivery)
         entry = self._data.get(delivery_key)
 
         if entry is None:
@@ -210,10 +216,18 @@ class Registry:
         Si la clave ya existe, solo se acepta cuando la huella de contenido
         coincide. Una entrega diferente con la misma fecha y punto de venta
         provoca un error para evitar sincronizaciones ambiguas.
+
+        Nota: esto significa que un segundo informe de Economato para el
+        mismo día y punto de venta, importado en una ejecución posterior
+        a la que ya sincronizó el primero, se rechaza en vez de fusionarse
+        (es una decisión de diseño para no arriesgar la integridad de
+        datos, no un error). Solo se fusionan correctamente los productos
+        cuando todos los movimientos de un mismo día/punto de venta se
+        importan juntos en una sola ejecución.
         """
 
         normalized_delivery = self._validate_delivery(delivery)
-        delivery_key = self._build_delivery_key(normalized_delivery)
+        delivery_key = build_delivery_key(normalized_delivery)
         delivery_date = self._as_date(normalized_delivery.delivery_date)
         sales_point_name = normalized_delivery.sales_point.name.strip()
 
@@ -236,7 +250,7 @@ class Registry:
 
         now = self._utc_now()
         products_payload = self._serialize_products(normalized_delivery.products)
-        payload_hash = self._build_payload_hash(normalized_delivery)
+        payload_hash = build_payload_hash(normalized_delivery)
 
         self._data[delivery_key] = {
             "schema_version": self._SCHEMA_VERSION,
@@ -275,7 +289,7 @@ class Registry:
         """
 
         normalized_delivery = self._validate_delivery(delivery)
-        delivery_key = self._build_delivery_key(normalized_delivery)
+        delivery_key = build_delivery_key(normalized_delivery)
         delivery_date = self._as_date(normalized_delivery.delivery_date)
         sales_point_name = normalized_delivery.sales_point.name.strip()
         entry = self._data.get(delivery_key)
@@ -350,7 +364,7 @@ class Registry:
         """
 
         if isinstance(delivery_or_key, Delivery):
-            delivery_key = self._build_delivery_key(
+            delivery_key = build_delivery_key(
                 self._validate_delivery(delivery_or_key)
             )
         else:
@@ -475,8 +489,8 @@ class Registry:
         serialized_products = [
             {
                 "code": product.code.strip(),
-                "name": self._normalize_payload_text(product.name),
-                "format": self._normalize_payload_text(product.format),
+                "name": normalize_payload_text(product.name),
+                "format": normalize_payload_text(product.format),
                 "price": self._require_finite_number(product.price, "precio"),
                 "quantity": self._require_finite_number(
                     product.quantity,
@@ -554,7 +568,7 @@ class Registry:
 
         self._validate_delivery(delivery)
 
-        expected_key = self._build_delivery_key(delivery)
+        expected_key = build_delivery_key(delivery)
         if expected_key != delivery_key:
             raise ValueError(
                 "La clave del Registry no coincide con los datos almacenados: "
@@ -575,7 +589,7 @@ class Registry:
     ) -> None:
         """Compara la huella o completa una entrada heredada sin productos."""
 
-        incoming_hash = self._build_payload_hash(delivery)
+        incoming_hash = build_payload_hash(delivery)
         stored_hash = entry.get("payload_hash")
         payload_available = bool(entry.get("payload_available", False))
 
@@ -603,40 +617,6 @@ class Registry:
         entry.setdefault("registered_at_utc", now)
         entry.setdefault("synchronized_at_utc", None)
 
-    def _build_payload_hash(
-        self,
-        delivery: Delivery,
-    ) -> str:
-        """Genera la misma huella estable utilizada por Synchronizer."""
-
-        products = sorted(
-            (
-                {
-                    "code": product.code.strip(),
-                    "name": self._normalize_payload_text(product.name),
-                    "format": self._normalize_payload_text(product.format),
-                    "price": self._canonical_number(product.price),
-                    "quantity": self._canonical_number(product.quantity),
-                }
-                for product in delivery.products
-            ),
-            key=lambda item: item["code"],
-        )
-
-        payload = {
-            "delivery_key": self._build_delivery_key(delivery),
-            "products": products,
-        }
-
-        serialized = json.dumps(
-            payload,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-
-        return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
-
     def _build_payload_hash_from_entry(
         self,
         delivery_key: str,
@@ -648,10 +628,10 @@ class Registry:
             (
                 {
                     "code": self._validate_product_code(product.get("code")),
-                    "name": self._normalize_payload_text(product.get("name")),
-                    "format": self._normalize_payload_text(product.get("format")),
-                    "price": self._canonical_number(product.get("price")),
-                    "quantity": self._canonical_number(product.get("quantity")),
+                    "name": normalize_payload_text(product.get("name")),
+                    "format": normalize_payload_text(product.get("format")),
+                    "price": canonical_number(product.get("price")),
+                    "quantity": canonical_number(product.get("quantity")),
                 }
                 for product in products
             ),
@@ -729,7 +709,7 @@ class Registry:
             f"punto de venta de {delivery_key}",
         )
 
-        if self._normalize_key_text(sales_point_name) != key_sales_point:
+        if normalize_key_text(sales_point_name) != key_sales_point:
             raise ValueError(
                 "El punto de venta almacenado no coincide con la clave "
                 f"{delivery_key}."
@@ -883,8 +863,8 @@ class Registry:
             normalized_products.append(
                 {
                     "code": code,
-                    "name": self._normalize_payload_text(name),
-                    "format": self._normalize_payload_text(product_format),
+                    "name": normalize_payload_text(name),
+                    "format": normalize_payload_text(product_format),
                     "price": price,
                     "quantity": quantity,
                 }
@@ -1058,20 +1038,6 @@ class Registry:
     # KEYS / DATES / GENERIC VALIDATION
     # ======================================================
 
-    def _build_delivery_key(
-        self,
-        delivery: Delivery,
-    ) -> str:
-        """Genera la clave estable utilizada por todo el proyecto."""
-
-        parsed_date = self._as_date(delivery.delivery_date)
-        sales_point_name = self._normalize_key_text(delivery.sales_point.name)
-
-        if not sales_point_name:
-            raise ValueError("El punto de venta de la entrega está vacío.")
-
-        return f"{parsed_date.isoformat()}|{sales_point_name}"
-
     def _parse_delivery_key(
         self,
         delivery_key: str,
@@ -1090,7 +1056,7 @@ class Registry:
                 f"Fecha no válida dentro de la clave {delivery_key!r}."
             ) from error
 
-        sales_point_key = self._normalize_key_text(sales_point_key)
+        sales_point_key = normalize_key_text(sales_point_key)
         if not sales_point_key:
             raise ValueError(
                 f"Punto de venta vacío dentro de la clave {delivery_key!r}."
@@ -1154,31 +1120,6 @@ class Registry:
                 continue
 
         raise ValueError(f"Formato de fecha no válido: {delivery_date!r}.")
-
-    def _normalize_key_text(
-        self,
-        value: object,
-    ) -> str:
-        """Normaliza un texto para utilizarlo dentro de una clave."""
-
-        normalized_value = unicodedata.normalize(
-            "NFKD",
-            str(value).strip(),
-        )
-        normalized_value = "".join(
-            character
-            for character in normalized_value
-            if not unicodedata.combining(character)
-        )
-        return " ".join(normalized_value.casefold().split())
-
-    def _normalize_payload_text(
-        self,
-        value: object,
-    ) -> str:
-        """Limpia espacios sin alterar mayúsculas, acentos ni contenido."""
-
-        return " ".join(str(value).strip().split())
 
     def _validate_product_code(
         self,
@@ -1248,19 +1189,6 @@ class Registry:
             raise ValueError(f"El campo {field_name} debe ser un entero no negativo.")
 
         return value
-
-    def _canonical_number(
-        self,
-        value: object,
-    ) -> str:
-        """Produce la representación numérica usada por Synchronizer."""
-
-        numeric_value = self._require_finite_number(value, "valor numérico")
-
-        if numeric_value == 0:
-            return "0"
-
-        return format(numeric_value, ".15g")
 
     def _normalize_optional_timestamp(
         self,

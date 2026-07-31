@@ -1,8 +1,8 @@
 # Iberostar Inventory Synchronizer
 
-Herramienta desarrollada en Python para sincronizar automáticamente los albaranes PDF generados por Iberostar con sus correspondientes archivos Excel de inventario.
+Herramienta desarrollada en Python para sincronizar automáticamente los movimientos de mercancía del Excel de Economato (almacén central) con los Excel mensuales de control de stock de cada punto de venta del hotel.
 
-El sistema identifica el punto de venta, extrae los productos y cantidades suministradas y actualiza automáticamente el Excel correspondiente.
+El sistema identifica el punto de venta, agrupa los productos suministrados por fecha, y actualiza automáticamente el Excel mensual correspondiente, creando productos y plantillas nuevas cuando hace falta.
 
 ---
 
@@ -53,38 +53,21 @@ pip install -r requirements.txt
 
 ---
 
-## 4. Configurar el proyecto
+## 4. Preparar los datos
 
-Crear el archivo `.env` a partir del ejemplo:
-
-Windows
-
-```bash
-copy .env.example .env
-```
-
-Linux / macOS
-
-```bash
-cp .env.example .env
-```
-
----
-
-## 5. Preparar los datos
-
-Colocar los archivos PDF y Excel dentro de la estructura correspondiente:
+Colocar los Excel de Economato dentro de la estructura correspondiente:
 
 ```
 storage/
 └── input/
-    ├── excels/
-    └── pdfs/
+    └── excels/
 ```
+
+Las plantillas maestras de cada punto de venta ya están en `storage/templates/`.
 
 ---
 
-## 6. Ejecutar
+## 5. Ejecutar
 
 ```bash
 python app/backend/main.py
@@ -96,18 +79,20 @@ o simplemente
 RUN.bat
 ```
 
+Al ejecutarse se abre un selector de archivos para elegir el o los Excel de Economato a importar.
+
 ---
 
 # Características
 
-- Lectura automática de albaranes PDF.
-- Identificación automática del punto de venta.
-- Extracción automática de códigos y cantidades.
-- Actualización automática de archivos Excel.
-- Arquitectura modular y escalable.
-- Preparado para incorporar interfaz gráfica.
-- Sistema de copias de seguridad.
-- Código organizado por capas.
+- Selección y lectura automática de los Excel de Economato (detecta la hoja correcta sin depender del nombre de las cabeceras).
+- Identificación automática del punto de venta y agrupación de movimientos por fecha.
+- Creación automática del Excel mensual de cada punto de venta a partir de su plantilla, cuando no existe todavía.
+- Creación automática de productos nuevos dentro del Excel, conservando formato y fórmulas.
+- Registro persistente de entregas importadas y sincronizadas, con recuperación segura ante interrupciones.
+- Copias de seguridad automáticas con retención antes de modificar cualquier Excel.
+- Guardado atómico de todos los archivos modificados.
+- Preparado para incorporar una interfaz gráfica (scaffold en `app/frontend/`, aún sin implementar).
 
 ---
 
@@ -134,35 +119,31 @@ Iberostar
 # Flujo de funcionamiento
 
 ```
-PDF
+Selección de los Excel de Economato
 
 ↓
 
-Extracción del texto
+Lectura, validación y normalización de movimientos
 
 ↓
 
-Interpretación
+Agrupación por fecha y punto de venta
 
 ↓
 
-Identificación del punto de venta
+Comprobación contra el Registry (nuevas / pendientes / ya sincronizadas)
 
 ↓
 
-Extracción de productos
+Por cada entrega pendiente:
+    localizar o crear el Excel mensual del punto de venta
+    localizar o crear cada producto
+    escribir la cantidad en la columna del día
+    crear backup y guardar de forma atómica
 
 ↓
 
-Localización del Excel
-
-↓
-
-Actualización automática
-
-↓
-
-Guardar
+Actualizar el Registry
 ```
 
 ---
@@ -171,20 +152,18 @@ Guardar
 
 - Python
 - OpenPyXL
-- PDFPlumber
-- PyMuPDF
-- python-dotenv
+- tkinter (selector de archivos, incluido en la librería estándar)
 
 ---
 
 # Estado del proyecto
 
-Actualmente el proyecto se encuentra en desarrollo.
+Actualmente el proyecto está en uso activo para la gestión diaria de inventario.
 
 Versión actual
 
 ```
-v0.1.0
+2.0.0
 ```
 
 ---

@@ -25,6 +25,7 @@ from config.constants import (
     PRODUCT_PRICE_COLUMN,
 )
 from models.product import Product
+from utils.product_codes import normalize_product_code
 
 
 class ProductManager:
@@ -139,6 +140,15 @@ class ProductManager:
             worksheet,
         )
 
+        if total_row <= FIRST_PRODUCT_ROW:
+            raise ValueError(
+                "No se puede crear el primer producto de forma automática: "
+                f"la hoja '{worksheet.title}' no contiene ninguna fila de "
+                "producto previa de la que copiar formato y fórmulas. "
+                "Añade al menos un producto manualmente en la plantilla "
+                "antes de sincronizar."
+            )
+
         merged_ranges_to_move: list[tuple[int, int, int, int]] = []
 
         for merged_range in list(worksheet.merged_cells.ranges):
@@ -215,21 +225,7 @@ class ProductManager:
         conservan como texto para evitar perder ceros iniciales.
         """
 
-        if value is None:
-            return False
-
-        if isinstance(value, bool):
-            return False
-
-        if isinstance(value, int):
-            return True
-
-        if isinstance(value, float):
-            return value.is_integer()
-
-        code = str(value).strip()
-
-        return bool(code) and code.isdigit()
+        return normalize_product_code(value) is not None
 
     def _row_contains_formulas(
         self,
@@ -290,6 +286,12 @@ class ProductManager:
             if source.has_style:
                 target.number_format = source.number_format
                 
+    # Excel interpreta como fórmula cualquier valor de celda que empiece
+    # por uno de estos caracteres. Los nombres y formatos de producto
+    # vienen de un Excel externo (Economato), así que se neutralizan
+    # antes de escribirlos.
+    _FORMULA_TRIGGER_CHARACTERS = ("=", "+", "-", "@")
+
     def _fill_product_data(
         self,
         worksheet: Worksheet,
@@ -308,25 +310,40 @@ class ProductManager:
         code_cell.value = product.code.strip()
         code_cell.number_format = "@"
 
-        worksheet.cell(
+        name_cell = worksheet.cell(
             row=row,
             column=PRODUCT_NAME_COLUMN,
-        ).value = product.name
+        )
+        name_cell.value = self._sanitize_text_for_excel(product.name)
+        name_cell.number_format = "@"
 
         worksheet.cell(
             row=row,
             column=CURRENT_STOCK_COLUMN,
         ).value = 0
 
-        worksheet.cell(
+        format_cell = worksheet.cell(
             row=row,
             column=PRODUCT_FORMAT_COLUMN,
-        ).value = product.format
+        )
+        format_cell.value = self._sanitize_text_for_excel(product.format)
+        format_cell.number_format = "@"
 
         worksheet.cell(
             row=row,
             column=PRODUCT_PRICE_COLUMN,
         ).value = product.price
+
+    def _sanitize_text_for_excel(self, text: str) -> str:
+        """
+        Antepone un apóstrofe si el texto empezaría con un carácter que
+        Excel interpretaría como el inicio de una fórmula.
+        """
+
+        if text.startswith(self._FORMULA_TRIGGER_CHARACTERS):
+            return f"'{text}"
+
+        return text
 
     def _copy_product_formulas(
         self,

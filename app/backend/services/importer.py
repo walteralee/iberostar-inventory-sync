@@ -48,6 +48,8 @@ from models.delivery import Delivery
 from models.product import Product
 from models.sales_point import SalesPoint
 from services.registry import Registry
+from utils.activity_log import log_incident
+from utils.product_codes import normalize_product_code
 
 
 class Importer:
@@ -64,6 +66,13 @@ class Importer:
     """
 
     _ZERO_TOLERANCE = 1e-9
+
+    # Detecta un texto compuesto únicamente por grupos de millar en
+    # formato español (p. ej. "1.234" o "12.345.678"), es decir, un
+    # punto seguido de grupos de exactamente 3 dígitos y sin parte
+    # decimal. Un texto que no encaje aquí (p. ej. "12.5") se sigue
+    # tratando como decimal, igual que antes.
+    _THOUSANDS_ONLY_PATTERN = re.compile(r"^-?\d{1,3}(\.\d{3})+$")
 
     _EXPECTED_FILE_ERRORS = (
         OSError,
@@ -210,6 +219,12 @@ class Importer:
 
                         if product_group not in self._valid_product_groups:
                             file_ignored_group_count += 1
+                            log_incident(
+                                "Grupo de producto no admitido | "
+                                f"archivo={excel_file.name} | "
+                                f"fila={row_number} | "
+                                f"grupo={row_values['group']!r}"
+                            )
                             continue
 
                         sales_point = self._parse_sales_point(
@@ -218,6 +233,12 @@ class Importer:
 
                         if sales_point is None:
                             file_ignored_sales_point_count += 1
+                            log_incident(
+                                "Punto de venta no reconocido | "
+                                f"archivo={excel_file.name} | "
+                                f"fila={row_number} | "
+                                f"valor={row_values['sales_point']!r}"
+                            )
                             continue
 
                         delivery_date = self._parse_date(
@@ -255,6 +276,13 @@ class Importer:
                         print(
                             f"Fila {row_number:05d} | "
                             f"IGNORADA | {type(error).__name__}: {error}"
+                        )
+                        log_incident(
+                            "Fila con error de parseo | "
+                            f"archivo={excel_file.name} | "
+                            f"fila={row_number} | "
+                            f"tipo={type(error).__name__} | "
+                            f"motivo={error}"
                         )
 
                 # Solo se incorporan los datos del archivo a la agrupación
@@ -605,38 +633,20 @@ class Importer:
         Normaliza un código de producto numérico y conserva sus ceros
         iniciales cuando el Excel lo proporciona como texto.
 
-        Esta regla coincide con la utilizada por ProductManager para
-        reconocer las filas de productos dentro de las plantillas.
+        Esta regla coincide con la utilizada por ExcelFinder y
+        ProductManager para reconocer las filas de productos dentro
+        de las plantillas.
         """
 
-        if value is None or isinstance(value, bool):
-            raise ValueError("El código del producto está vacío.")
+        code = normalize_product_code(value)
 
-        if isinstance(value, int):
-            return str(value)
-
-        if isinstance(value, float):
-            if not isfinite(value) or not value.is_integer():
-                raise ValueError(
-                    f"El código del producto debe ser un número entero: {value}"
-                )
-
-            return str(int(value))
-
-        normalized_value = str(value).strip()
-
-        if not normalized_value:
-            raise ValueError("El código del producto está vacío.")
-
-        if re.fullmatch(r"\d+\.0+", normalized_value):
-            normalized_value = normalized_value.split(".", maxsplit=1)[0]
-
-        if not normalized_value.isdigit():
+        if code is None:
             raise ValueError(
-                "El código del producto debe contener únicamente dígitos: " f"{value}"
+                "El código del producto debe contener únicamente dígitos: "
+                f"{value}"
             )
 
-        return normalized_value
+        return code
 
     def _parse_number(
         self,
@@ -686,6 +696,17 @@ class Importer:
 
         elif "," in normalized_value:
             normalized_value = normalized_value.replace(",", ".")
+
+        elif self._THOUSANDS_ONLY_PATTERN.fullmatch(normalized_value):
+            # Sin coma decimal y con grupos de exactamente 3 dígitos:
+            # es un separador de millar español, no un decimal.
+            message = (
+                f"El campo {field_name} = '{value}' se interpretó como "
+                "separador de millar (formato español), no como decimal."
+            )
+            print(f"ADVERTENCIA | {message}")
+            log_incident(message)
+            normalized_value = normalized_value.replace(".", "")
 
         if is_parenthesized_negative:
             normalized_value = f"-{normalized_value}"

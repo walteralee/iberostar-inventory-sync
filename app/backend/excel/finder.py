@@ -20,6 +20,7 @@ from config.constants import (
     DAY_HEADER_ROW,
     FIRST_DAY_COLUMN,
 )
+from utils.product_codes import normalize_product_code
 
 
 class ExcelFinder:
@@ -50,7 +51,7 @@ class ExcelFinder:
                 column=PRODUCT_CODE_COLUMN,
             ).value
 
-            code = self._normalize_product_code(value)
+            code = normalize_product_code(value)
 
             if code is None:
                 continue
@@ -85,51 +86,3 @@ class ExcelFinder:
             raise ValueError(f"Día inválido: {day}")
 
         return FIRST_DAY_COLUMN + (day - 1)
-
-    # ======================================================
-    # PRIVATE
-    # ======================================================
-
-    def _normalize_product_code(
-        self,
-        value: object,
-    ) -> str | None:
-        """
-        Convierte una celda en un código válido.
-
-        Devuelve None cuando la celda no contiene un código
-        de producto.
-        """
-
-        if value is None:
-            return None
-
-        if isinstance(value, bool):
-            return None
-
-        if isinstance(value, int):
-            return str(value)
-
-        if isinstance(value, float):
-
-            if not value.is_integer():
-                return None
-
-            return str(int(value))
-
-        code = str(value).strip()
-
-        if not code:
-            return None
-
-        if code.endswith(".0"):
-
-            try:
-                return str(int(float(code)))
-            except ValueError:
-                return None
-
-        if not code.isdigit():
-            return None
-
-        return code

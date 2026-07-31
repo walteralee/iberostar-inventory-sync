@@ -47,7 +47,7 @@ from excel.source_reader import SourceReader
 from models.delivery import Delivery
 from models.product import Product
 from models.sales_point import SalesPoint
-from services.registry import Registry
+from services.registry import Registry, RegistryConflictError
 from utils.activity_log import log_incident
 from utils.product_codes import normalize_product_code
 
@@ -157,6 +157,7 @@ class Importer:
         ignored_group_count = 0
         ignored_sales_point_count = 0
         ignored_zero_quantity_count = 0
+        ignored_duplicate_count = 0
         row_error_count = 0
 
         self._print_section("3. PROCESAMIENTO DE LOS EXCEL")
@@ -287,7 +288,7 @@ class Importer:
 
                 # Solo se incorporan los datos del archivo a la agrupación
                 # global cuando el procesamiento termina correctamente.
-                self._merge_grouped_products(
+                ignored_duplicate_count += self._merge_grouped_products(
                     target=grouped_products,
                     source=file_grouped_products,
                     source_description=excel_file.name,
@@ -345,6 +346,7 @@ class Importer:
             imported_count,
             pending_count,
             existing_count,
+            conflict_count,
         ) = self._filter_deliveries_with_registry(deliveries)
 
         self._print_section("6. GUARDADO DEL REGISTRY")
@@ -363,11 +365,13 @@ class Importer:
             ignored_group_count=ignored_group_count,
             ignored_sales_point_count=ignored_sales_point_count,
             ignored_zero_quantity_count=ignored_zero_quantity_count,
+            ignored_duplicate_count=ignored_duplicate_count,
             row_error_count=row_error_count,
             delivery_count=len(deliveries),
             imported_count=imported_count,
             pending_count=pending_count,
             existing_count=existing_count,
+            conflict_count=conflict_count,
             synchronization_count=len(imported_deliveries),
         )
 
@@ -790,25 +794,50 @@ class Importer:
         target: dict[tuple[date, str], dict[str, Product]],
         source: dict[tuple[date, str], dict[str, Product]],
         source_description: str,
-    ) -> None:
+    ) -> int:
         """
         Incorpora una agrupación procesada correctamente a la global.
+
+        A diferencia de las filas dentro de un mismo Excel (donde un mismo
+        código sí acumula cantidades, porque son movimientos distintos del
+        mismo informe), entre Excel distintos NO se suman: los informes de
+        Economato son acumulados y un Excel más reciente puede repetir
+        movimientos de fecha y punto de venta que ya aportó un Excel
+        anterior en esta misma ejecución. Sumarlos duplicaría cantidades.
+
+        Por eso, si un código ya llegó de un Excel anterior para la misma
+        fecha y punto de venta, se ignora la versión de este Excel y se
+        conserva la ya incorporada.
         """
+
+        ignored_duplicate_count = 0
 
         for (
             delivery_date,
             sales_point_name,
         ), products_by_code in source.items():
-            sales_point = SalesPoint(name=sales_point_name)
+            target_products = target.setdefault(
+                (delivery_date, sales_point_name),
+                {},
+            )
 
-            for product in products_by_code.values():
-                self._add_product(
-                    grouped_products=target,
-                    delivery_date=delivery_date,
-                    sales_point=sales_point,
-                    product=product,
-                    source_description=source_description,
-                )
+            for code, product in products_by_code.items():
+                if code in target_products:
+                    ignored_duplicate_count += 1
+
+                    message = (
+                        f"Código {code}: ya registrado para "
+                        f"{delivery_date.strftime('%d/%m/%Y')} / "
+                        f"{sales_point_name} en un Excel anterior. Se ignora "
+                        f"en {source_description} para no duplicar cantidades."
+                    )
+                    print(f"ADVERTENCIA | {message}")
+                    log_incident(message)
+                    continue
+
+                target_products[code] = product
+
+        return ignored_duplicate_count
 
     def _build_deliveries(
         self,
@@ -862,15 +891,23 @@ class Importer:
     def _filter_deliveries_with_registry(
         self,
         deliveries: list[Delivery],
-    ) -> tuple[list[Delivery], int, int, int]:
+    ) -> tuple[list[Delivery], int, int, int, int]:
         """
         Clasifica las entregas como nuevas, pendientes o sincronizadas.
+
+        Si una entrega coincide en fecha y punto de venta con una ya
+        registrada pero con productos o cantidades diferentes, se trata
+        como un conflicto: se omite solo esa entrega (no se sincroniza ni
+        modifica el Registry) y el resto del proceso continúa con
+        normalidad. El conflicto se deja constancia en el log de
+        incidencias para revisión manual.
         """
 
         imported_deliveries: list[Delivery] = []
         imported_count = 0
         pending_count = 0
         existing_count = 0
+        conflict_count = 0
 
         for delivery_index, delivery in enumerate(deliveries, start=1):
             print()
@@ -881,7 +918,25 @@ class Importer:
             print(f"Punto de venta : {delivery.sales_point.name}")
             print(f"Productos      : {len(delivery.products)}")
 
-            if self.registry.exists(delivery):
+            try:
+                delivery_exists = self.registry.exists(delivery)
+            except RegistryConflictError as error:
+                conflict_count += 1
+
+                print("Registry       : CONFLICTO DETECTADO")
+                print(f"Detalle        : {error}")
+                print("Resultado      : ENTREGA OMITIDA POR CONFLICTO")
+                print("-" * 100)
+
+                log_incident(
+                    "Conflicto de Registry | "
+                    f"fecha={delivery.delivery_date.strftime('%d/%m/%Y')} | "
+                    f"punto_de_venta={delivery.sales_point.name} | "
+                    f"detalle={error}"
+                )
+                continue
+
+            if delivery_exists:
                 if self.registry.is_synchronized(delivery):
                     existing_count += 1
 
@@ -914,6 +969,7 @@ class Importer:
             imported_count,
             pending_count,
             existing_count,
+            conflict_count,
         )
 
     # ======================================================
@@ -1078,11 +1134,13 @@ class Importer:
         ignored_group_count: int,
         ignored_sales_point_count: int,
         ignored_zero_quantity_count: int,
+        ignored_duplicate_count: int,
         row_error_count: int,
         delivery_count: int,
         imported_count: int,
         pending_count: int,
         existing_count: int,
+        conflict_count: int,
         synchronization_count: int,
     ) -> None:
         self._print_section("7. RESUMEN DE IMPORTACIÓN")
@@ -1096,11 +1154,23 @@ class Importer:
         print(f"Grupos no admitidos       : {ignored_group_count}")
         print(f"Puntos de venta ignorados : {ignored_sales_point_count}")
         print(f"Cantidades a cero         : {ignored_zero_quantity_count}")
+        print(f"Duplicados entre Excel    : {ignored_duplicate_count}")
         print(f"Filas con errores         : {row_error_count}")
         print("-" * 100)
         print(f"Entregas construidas      : {delivery_count}")
         print(f"Entregas nuevas           : {imported_count}")
         print(f"Entregas pendientes       : {pending_count}")
         print(f"Ya sincronizadas          : {existing_count}")
+        print(f"En conflicto (omitidas)   : {conflict_count}")
         print(f"Entregas para sincronizar : {synchronization_count}")
         print("=" * 100)
+
+        if conflict_count:
+            print()
+            print("!" * 100)
+            print("ATENCIÓN: hay entregas omitidas por conflicto con el Registry.")
+            print(
+                "Revisa storage/logs/importacion_incidencias.log para "
+                "identificar la fecha y el punto de venta afectados."
+            )
+            print("!" * 100)

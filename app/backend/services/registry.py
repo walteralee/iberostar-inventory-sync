@@ -45,6 +45,18 @@ from utils.delivery_identity import (
 )
 
 
+class RegistryConflictError(ValueError):
+    """
+    Se lanza cuando una entrega coincide en fecha y punto de venta con una
+    ya registrada, pero su contenido (productos o cantidades) difiere.
+
+    Es una subclase de ``ValueError`` para no romper a quienes ya capturan
+    ese tipo genérico; permite a los llamantes que sí quieran distinguir
+    este caso (por ejemplo, el Importer) omitir la entrega en conflicto sin
+    detener el resto del proceso.
+    """
+
+
 class Registry:
     """
     Gestiona el estado persistente de las entregas.
@@ -169,6 +181,11 @@ class Registry:
         Cuando la clave ya existe, también verifica que su contenido coincida
         con el almacenado. Si una versión antigua no guardó los productos,
         el registro se enriquece en memoria con la entrega recibida.
+
+        Lanza ``RegistryConflictError`` (subclase de ``ValueError``) si la
+        clave existe pero con productos o cantidades diferentes. Los
+        llamantes que quieran omitir la entrega en conflicto en vez de
+        detener todo el proceso deben capturar ese tipo específico.
         """
 
         normalized_delivery = self._validate_delivery(delivery)
@@ -595,7 +612,7 @@ class Registry:
 
         if payload_available and isinstance(stored_hash, str) and stored_hash:
             if stored_hash != incoming_hash:
-                raise ValueError(
+                raise RegistryConflictError(
                     "El Registry ya contiene una entrega con la misma fecha y "
                     "punto de venta, pero con productos o cantidades diferentes. "
                     f"Identificador: {delivery_key}."

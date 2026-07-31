@@ -8,19 +8,11 @@ El sistema identifica el punto de venta, agrupa los productos suministrados por 
 
 # 🚀 Instalación
 
-## 1. Clonar el repositorio
-
 ```bash
 git clone https://github.com/walteralee/iberostar-inventory-sync.git
-```
-
-Entrar en la carpeta del proyecto:
-
-```bash
 cd iberostar-inventory-sync
+.\RUN.bat
 ```
-
----
 
 ## 2. Crear un entorno virtual
 

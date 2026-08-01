@@ -15,6 +15,7 @@ Descripción:
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from math import isclose, isfinite
 from pathlib import Path
@@ -50,6 +51,56 @@ from models.sales_point import SalesPoint
 from services.registry import Registry, RegistryConflictError
 from utils.activity_log import log_incident
 from utils.product_codes import normalize_product_code
+
+
+@dataclass(slots=True)
+class ImportSummary:
+    """
+    Contadores y mensajes de incidencia de una ejecución de importación.
+
+    Se expone como ``Importer.last_summary`` después de ``run()`` para que
+    el llamante (``main.py``) pueda combinarlo con el resumen del
+    ``Synchronizer`` y mostrar un único resumen final consolidado.
+    """
+
+    selected_file_count: int = 0
+    processed_file_count: int = 0
+    file_error_count: int = 0
+    total_rows_read: int = 0
+    valid_row_count: int = 0
+    ignored_group_count: int = 0
+    ignored_sales_point_count: int = 0
+    ignored_zero_quantity_count: int = 0
+    ignored_duplicate_count: int = 0
+    row_error_count: int = 0
+    delivery_count: int = 0
+    imported_count: int = 0
+    pending_count: int = 0
+    existing_count: int = 0
+    conflict_count: int = 0
+    synchronization_count: int = 0
+
+    file_error_messages: list[str] = field(default_factory=list)
+    row_error_messages: list[str] = field(default_factory=list)
+    discrepancy_messages: list[str] = field(default_factory=list)
+    duplicate_messages: list[str] = field(default_factory=list)
+    thousands_format_messages: list[str] = field(default_factory=list)
+    conflict_messages: list[str] = field(default_factory=list)
+
+    def has_incidents(self) -> bool:
+        """Indica si la importación produjo algún error o advertencia."""
+
+        return bool(
+            self.file_error_count
+            or self.row_error_count
+            or self.ignored_group_count
+            or self.ignored_sales_point_count
+            or self.ignored_zero_quantity_count
+            or self.ignored_duplicate_count
+            or self.conflict_count
+            or self.discrepancy_messages
+            or self.thousands_format_messages
+        )
 
 
 class Importer:
@@ -100,6 +151,10 @@ class Importer:
         self.registry = registry
         self.source_reader = source_reader or SourceReader()
 
+        # Resumen de incidencias de la última llamada a run(), disponible
+        # para que main.py construya el resumen final consolidado.
+        self.last_summary = ImportSummary()
+
         self._sales_point_mapping = {
             self._normalize_lookup_text(source_name): target_name
             for source_name, target_name in SALES_POINT_MAPPING.items()
@@ -128,19 +183,14 @@ class Importer:
             Entregas nuevas o pendientes de sincronización.
         """
 
-        self._print_section("1. SELECCIÓN DE ARCHIVOS EXCEL")
-
         if excel_files is None:
-            print("Abriendo el explorador de archivos...")
             selected_files = self._select_excel_files()
         else:
             selected_files = self._normalize_file_paths(excel_files)
 
         if not selected_files:
-            self._print_cancelled_selection()
+            self.last_summary = ImportSummary()
             return []
-
-        self._print_selected_files(selected_files)
 
         # La agrupación es global para permitir que varios archivos
         # aporten movimientos a una misma entrega.
@@ -160,12 +210,13 @@ class Importer:
         ignored_duplicate_count = 0
         row_error_count = 0
 
-        self._print_section("3. PROCESAMIENTO DE LOS EXCEL")
+        file_error_messages: list[str] = []
+        row_error_messages: list[str] = []
+        discrepancy_messages: list[str] = []
+        duplicate_messages: list[str] = []
+        thousands_format_messages: list[str] = []
 
-        for file_index, excel_file in enumerate(
-            selected_files,
-            start=1,
-        ):
+        for excel_file in selected_files:
             worksheet: Worksheet | None = None
 
             # Cada archivo se procesa primero en una agrupación temporal.
@@ -184,20 +235,8 @@ class Importer:
             file_row_errors = 0
 
             try:
-                self._print_file_header(
-                    file_index=file_index,
-                    total_files=len(selected_files),
-                    excel_file=excel_file,
-                )
-
                 worksheet = self.source_reader.read(excel_file)
                 self._validate_worksheet(worksheet)
-
-                print(f"Hoja abierta     : {worksheet.title}")
-                print(f"Filas detectadas : {worksheet.max_row}")
-                print(f"Columnas         : {worksheet.max_column}")
-                print("Proceso          : Leyendo movimientos...")
-                print("-" * 100)
 
                 for row_number in range(
                     SOURCE_HEADER_ROW + 1,
@@ -253,6 +292,7 @@ class Importer:
                             format_value=row_values["format"],
                             price_value=row_values["price"],
                             quantity_value=row_values["quantity"],
+                            thousands_format_messages=thousands_format_messages,
                         )
 
                         if self._is_zero(product.quantity):
@@ -267,6 +307,7 @@ class Importer:
                             source_description=(
                                 f"{excel_file.name}, fila {row_number}"
                             ),
+                            discrepancy_messages=discrepancy_messages,
                         )
 
                         file_valid_rows += 1
@@ -274,9 +315,9 @@ class Importer:
                     except (TypeError, ValueError, OverflowError) as error:
                         file_row_errors += 1
 
-                        print(
-                            f"Fila {row_number:05d} | "
-                            f"IGNORADA | {type(error).__name__}: {error}"
+                        row_error_messages.append(
+                            f"{excel_file.name} | fila {row_number:05d} | "
+                            f"{type(error).__name__}: {error}"
                         )
                         log_incident(
                             "Fila con error de parseo | "
@@ -292,6 +333,7 @@ class Importer:
                     target=grouped_products,
                     source=file_grouped_products,
                     source_description=excel_file.name,
+                    duplicate_messages=duplicate_messages,
                 )
 
                 processed_file_count += 1
@@ -302,44 +344,24 @@ class Importer:
                 ignored_zero_quantity_count += file_ignored_zero_quantity_count
                 row_error_count += file_row_errors
 
-                self._print_file_summary(
-                    file_rows_read=file_rows_read,
-                    file_valid_rows=file_valid_rows,
-                    file_row_errors=file_row_errors,
-                )
-
             except self._EXPECTED_FILE_ERRORS as error:
                 file_error_count += 1
 
-                self._print_expected_file_error(
-                    file_index=file_index,
-                    excel_file=excel_file,
-                    error=error,
+                file_error_messages.append(
+                    f"{excel_file.name} | {type(error).__name__}: {error}"
                 )
 
-            except Exception as error:
+            except Exception:
                 # Un error inesperado suele señalar un fallo de programación.
-                # Se muestra el contexto y se propaga para no ocultarlo.
-                self._print_unexpected_file_error(
-                    file_index=file_index,
-                    excel_file=excel_file,
-                    error=error,
-                )
+                # Se propaga sin envolverlo para no ocultar un fallo interno;
+                # Python mostrará su propia traza en la consola.
                 raise
 
             finally:
                 if worksheet is not None:
                     worksheet.parent.close()
 
-        self._print_section("4. CONSTRUCCIÓN DE LAS ENTREGAS")
-
         deliveries = self._build_deliveries(grouped_products)
-
-        print(f"Grupos encontrados  : {len(grouped_products)}")
-        print(f"Entregas construidas: {len(deliveries)}")
-        print("=" * 100)
-
-        self._print_section("5. COMPROBACIÓN DEL REGISTRY")
 
         (
             imported_deliveries,
@@ -347,16 +369,12 @@ class Importer:
             pending_count,
             existing_count,
             conflict_count,
+            conflict_messages,
         ) = self._filter_deliveries_with_registry(deliveries)
-
-        self._print_section("6. GUARDADO DEL REGISTRY")
 
         self.registry.save()
 
-        print("Estado: GUARDADO CORRECTAMENTE")
-        print("=" * 100)
-
-        self._print_import_summary(
+        self.last_summary = ImportSummary(
             selected_file_count=len(selected_files),
             processed_file_count=processed_file_count,
             file_error_count=file_error_count,
@@ -373,6 +391,12 @@ class Importer:
             existing_count=existing_count,
             conflict_count=conflict_count,
             synchronization_count=len(imported_deliveries),
+            file_error_messages=file_error_messages,
+            row_error_messages=row_error_messages,
+            discrepancy_messages=discrepancy_messages,
+            duplicate_messages=duplicate_messages,
+            thousands_format_messages=thousands_format_messages,
+            conflict_messages=conflict_messages,
         )
 
         return imported_deliveries
@@ -610,6 +634,7 @@ class Importer:
         format_value: object,
         price_value: object,
         quantity_value: object,
+        thousands_format_messages: list[str],
     ) -> Product:
         """
         Construye un producto a partir de las celdas de una fila.
@@ -625,8 +650,16 @@ class Importer:
                 format_value,
                 "formato del producto",
             ),
-            price=self._parse_number(price_value, "precio"),
-            quantity=self._parse_number(quantity_value, "cantidad"),
+            price=self._parse_number(
+                price_value,
+                "precio",
+                thousands_format_messages=thousands_format_messages,
+            ),
+            quantity=self._parse_number(
+                quantity_value,
+                "cantidad",
+                thousands_format_messages=thousands_format_messages,
+            ),
         )
 
     def _parse_product_code(
@@ -656,6 +689,7 @@ class Importer:
         self,
         value: object,
         field_name: str,
+        thousands_format_messages: list[str],
     ) -> float:
         """
         Convierte un valor numérico del Excel a float y rechaza valores
@@ -681,7 +715,7 @@ class Importer:
             raise ValueError(f"El campo {field_name} está vacío.")
 
         normalized_value = (
-            normalized_value.replace("\u00a0", "").replace("€", "").replace(" ", "")
+            normalized_value.replace(" ", "").replace("€", "").replace(" ", "")
         )
 
         is_parenthesized_negative = normalized_value.startswith(
@@ -708,7 +742,7 @@ class Importer:
                 f"El campo {field_name} = '{value}' se interpretó como "
                 "separador de millar (formato español), no como decimal."
             )
-            print(f"ADVERTENCIA | {message}")
+            thousands_format_messages.append(message)
             log_incident(message)
             normalized_value = normalized_value.replace(".", "")
 
@@ -739,6 +773,7 @@ class Importer:
         delivery_date: date,
         sales_point: SalesPoint,
         product: Product,
+        discrepancy_messages: list[str],
         source_description: str = "origen desconocido",
     ) -> None:
         """
@@ -777,8 +812,7 @@ class Importer:
             differences.append("precio")
 
         if differences:
-            print(
-                "ADVERTENCIA | "
+            discrepancy_messages.append(
                 f"Código {product.code}: cambian "
                 f"{', '.join(differences)} en {source_description}. "
                 "Se conservarán los datos más recientes."
@@ -794,6 +828,7 @@ class Importer:
         target: dict[tuple[date, str], dict[str, Product]],
         source: dict[tuple[date, str], dict[str, Product]],
         source_description: str,
+        duplicate_messages: list[str],
     ) -> int:
         """
         Incorpora una agrupación procesada correctamente a la global.
@@ -831,7 +866,7 @@ class Importer:
                         f"{sales_point_name} en un Excel anterior. Se ignora "
                         f"en {source_description} para no duplicar cantidades."
                     )
-                    print(f"ADVERTENCIA | {message}")
+                    duplicate_messages.append(message)
                     log_incident(message)
                     continue
 
@@ -891,7 +926,7 @@ class Importer:
     def _filter_deliveries_with_registry(
         self,
         deliveries: list[Delivery],
-    ) -> tuple[list[Delivery], int, int, int, int]:
+    ) -> tuple[list[Delivery], int, int, int, int, list[str]]:
         """
         Clasifica las entregas como nuevas, pendientes o sincronizadas.
 
@@ -908,25 +943,19 @@ class Importer:
         pending_count = 0
         existing_count = 0
         conflict_count = 0
+        conflict_messages: list[str] = []
 
-        for delivery_index, delivery in enumerate(deliveries, start=1):
-            print()
-            print("-" * 100)
-            print(f"ENTREGA {delivery_index:03d} " f"DE {len(deliveries):03d}")
-            print("-" * 100)
-            print("Fecha          : " f"{delivery.delivery_date.strftime('%d/%m/%Y')}")
-            print(f"Punto de venta : {delivery.sales_point.name}")
-            print(f"Productos      : {len(delivery.products)}")
-
+        for delivery in deliveries:
             try:
                 delivery_exists = self.registry.exists(delivery)
             except RegistryConflictError as error:
                 conflict_count += 1
 
-                print("Registry       : CONFLICTO DETECTADO")
-                print(f"Detalle        : {error}")
-                print("Resultado      : ENTREGA OMITIDA POR CONFLICTO")
-                print("-" * 100)
+                message = (
+                    f"{delivery.delivery_date.strftime('%d/%m/%Y')} | "
+                    f"{delivery.sales_point.name} | {error}"
+                )
+                conflict_messages.append(message)
 
                 log_incident(
                     "Conflicto de Registry | "
@@ -939,30 +968,15 @@ class Importer:
             if delivery_exists:
                 if self.registry.is_synchronized(delivery):
                     existing_count += 1
-
-                    print("Registry       : YA REGISTRADA")
-                    print("Sincronización : COMPLETADA")
-                    print("Resultado      : ENTREGA OMITIDA")
-                    print("-" * 100)
                     continue
 
                 pending_count += 1
                 imported_deliveries.append(delivery)
-
-                print("Registry       : YA REGISTRADA")
-                print("Sincronización : PENDIENTE")
-                print("Resultado      : ENTREGA RECUPERADA")
-                print("-" * 100)
                 continue
 
             self.registry.register(delivery)
             imported_deliveries.append(delivery)
             imported_count += 1
-
-            print("Registry       : REGISTRADA")
-            print("Sincronización : PENDIENTE")
-            print("Resultado      : ENTREGA NUEVA")
-            print("-" * 100)
 
         return (
             imported_deliveries,
@@ -970,6 +984,7 @@ class Importer:
             pending_count,
             existing_count,
             conflict_count,
+            conflict_messages,
         )
 
     # ======================================================
@@ -1038,139 +1053,3 @@ class Importer:
             rel_tol=0.0,
             abs_tol=self._ZERO_TOLERANCE,
         )
-
-    # ======================================================
-    # CONSOLE OUTPUT
-    # ======================================================
-
-    def _print_section(self, title: str) -> None:
-        print()
-        print("=" * 100)
-        print(title)
-        print("=" * 100)
-
-    def _print_cancelled_selection(self) -> None:
-        print()
-        print("!" * 100)
-        print("SELECCIÓN CANCELADA")
-        print("!" * 100)
-        print("No se seleccionó ningún archivo Excel.")
-        print("No hay archivos para importar.")
-        print("!" * 100)
-
-    def _print_selected_files(self, excel_files: list[Path]) -> None:
-        self._print_section("2. LISTA DE EXCEL ENCONTRADOS")
-
-        for index, excel_file in enumerate(excel_files, start=1):
-            print(f"{index:03d} | {excel_file.name}")
-
-        print("-" * 100)
-        print(f"Total de Excel seleccionados: {len(excel_files)}")
-        print("=" * 100)
-
-    def _print_file_header(
-        self,
-        file_index: int,
-        total_files: int,
-        excel_file: Path,
-    ) -> None:
-        print()
-        print("-" * 100)
-        print(f"EXCEL {file_index:03d} DE {total_files:03d}" f" | {excel_file.name}")
-        print("-" * 100)
-
-    def _print_file_summary(
-        self,
-        file_rows_read: int,
-        file_valid_rows: int,
-        file_row_errors: int,
-    ) -> None:
-        print("-" * 100)
-        print(f"Filas leídas     : {file_rows_read}")
-        print(f"Filas válidas    : {file_valid_rows}")
-        print(f"Errores de fila  : {file_row_errors}")
-        print("Estado           : EXCEL PROCESADO")
-        print("-" * 100)
-
-    def _print_expected_file_error(
-        self,
-        file_index: int,
-        excel_file: Path,
-        error: Exception,
-    ) -> None:
-        print()
-        print("!" * 100)
-        print(f"ERROR DURANTE EL PROCESAMIENTO DEL EXCEL {file_index:03d}")
-        print("!" * 100)
-        print(f"Archivo : {excel_file.name}")
-        print(f"Tipo    : {type(error).__name__}")
-        print(f"Motivo  : {error}")
-        print("Datos   : El archivo se descartó por completo")
-        print("!" * 100)
-
-    def _print_unexpected_file_error(
-        self,
-        file_index: int,
-        excel_file: Path,
-        error: Exception,
-    ) -> None:
-        print()
-        print("!" * 100)
-        print(f"ERROR INESPERADO EN EL EXCEL {file_index:03d}")
-        print("!" * 100)
-        print(f"Archivo : {excel_file.name}")
-        print(f"Tipo    : {type(error).__name__}")
-        print(f"Motivo  : {error}")
-        print("Acción  : El error se propagará para no ocultar un fallo interno")
-        print("!" * 100)
-
-    def _print_import_summary(
-        self,
-        selected_file_count: int,
-        processed_file_count: int,
-        file_error_count: int,
-        total_rows_read: int,
-        valid_row_count: int,
-        ignored_group_count: int,
-        ignored_sales_point_count: int,
-        ignored_zero_quantity_count: int,
-        ignored_duplicate_count: int,
-        row_error_count: int,
-        delivery_count: int,
-        imported_count: int,
-        pending_count: int,
-        existing_count: int,
-        conflict_count: int,
-        synchronization_count: int,
-    ) -> None:
-        self._print_section("7. RESUMEN DE IMPORTACIÓN")
-
-        print(f"Excel seleccionados       : {selected_file_count}")
-        print(f"Excel procesados          : {processed_file_count}")
-        print(f"Excel con errores         : {file_error_count}")
-        print("-" * 100)
-        print(f"Filas leídas              : {total_rows_read}")
-        print(f"Filas válidas             : {valid_row_count}")
-        print(f"Grupos no admitidos       : {ignored_group_count}")
-        print(f"Puntos de venta ignorados : {ignored_sales_point_count}")
-        print(f"Cantidades a cero         : {ignored_zero_quantity_count}")
-        print(f"Duplicados entre Excel    : {ignored_duplicate_count}")
-        print(f"Filas con errores         : {row_error_count}")
-        print("-" * 100)
-        print(f"Entregas construidas      : {delivery_count}")
-        print(f"Entregas nuevas           : {imported_count}")
-        print(f"Entregas pendientes       : {pending_count}")
-        print(f"Ya sincronizadas          : {existing_count}")
-        print(f"En conflicto (omitidas)   : {conflict_count}")
-        print(f"Entregas para sincronizar : {synchronization_count}")
-        print("=" * 100)
-
-        if conflict_count:
-            print()
-            print("!" * 100)
-            print("ATENCIÓN: hay entregas omitidas por conflicto con el Registry.")
-            print(
-                "Revisa storage/logs/importacion_incidencias.log para "
-                "identificar la fecha y el punto de venta afectados."
-            )
-            print("!" * 100)

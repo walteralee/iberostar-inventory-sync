@@ -63,12 +63,6 @@ class ExcelFinder:
                 row,
             )
 
-        print(f"Productos indexados : {len(index)}")
-        print(f"Primera fila        : {FIRST_PRODUCT_ROW}")
-        print(f"Última fila leída   : {worksheet.max_row}")
-        print("Estado              : ÍNDICE CONSTRUIDO")
-        print("-" * 100)
-
         return index
 
     def find_day_column(

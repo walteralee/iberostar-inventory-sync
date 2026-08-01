@@ -256,13 +256,6 @@ class Registry:
                 entry=existing_entry,
                 delivery=normalized_delivery,
             )
-
-            self._print_register_existing(
-                delivery_key=delivery_key,
-                delivery_date=delivery_date,
-                sales_point_name=sales_point_name,
-                synchronized=bool(existing_entry.get("synchronized", False)),
-            )
             return
 
         now = self._utc_now()
@@ -287,13 +280,6 @@ class Registry:
             "synchronized_at_utc": None,
         }
 
-        self._print_registered(
-            delivery_key=delivery_key,
-            delivery_date=delivery_date,
-            sales_point_name=sales_point_name,
-            product_count=len(products_payload),
-        )
-
     def mark_as_synchronized(
         self,
         delivery: Delivery,
@@ -307,8 +293,6 @@ class Registry:
 
         normalized_delivery = self._validate_delivery(delivery)
         delivery_key = build_delivery_key(normalized_delivery)
-        delivery_date = self._as_date(normalized_delivery.delivery_date)
-        sales_point_name = normalized_delivery.sales_point.name.strip()
         entry = self._data.get(delivery_key)
 
         if entry is None:
@@ -332,13 +316,6 @@ class Registry:
         if not previous_status or not entry.get("synchronized_at_utc"):
             entry["synchronized_at_utc"] = now
 
-        self._print_synchronization_update(
-            delivery_key=delivery_key,
-            delivery_date=delivery_date,
-            sales_point_name=sales_point_name,
-            previous_status=previous_status,
-        )
-
     def save(self) -> None:
         """
         Valida y guarda el registro mediante sustitución atómica.
@@ -350,24 +327,12 @@ class Registry:
         self._ensure_open()
         normalized_data = self._validate_registry_data(self._data)
 
-        print()
-        print("-" * 100)
-        print("ESCRITURA DEL REGISTRY")
-        print("-" * 100)
-        print(f"Archivo        : {self._registry_file.name}")
-        print(f"Ruta           : {self._registry_file}")
-        print(f"Registros      : {len(normalized_data)}")
-        print("Proceso        : Validando y guardando contenido...")
-
         self._atomic_write(normalized_data)
 
         # Conservamos exactamente el mismo objeto dict para no romper los
         # snapshots externos que trabajan con ``registry.data``.
         self._data.clear()
         self._data.update(normalized_data)
-
-        print("Estado         : GUARDADO CORRECTAMENTE")
-        print("-" * 100)
 
     def get_delivery(
         self,
@@ -400,23 +365,41 @@ class Registry:
             entry=entry,
         )
 
-    def get_pending_deliveries(self) -> list[Delivery]:
-        """Reconstruye y devuelve todas las entregas pendientes."""
+    def get_pending_deliveries(self) -> tuple[list[Delivery], list[str]]:
+        """
+        Reconstruye y devuelve todas las entregas pendientes.
+
+        Una entrada que no pueda reconstruirse (por ejemplo, un registro
+        heredado sin productos guardados) se omite en vez de detener la
+        recuperación del resto de entregas pendientes. Los motivos de las
+        entradas omitidas se devuelven junto con las entregas para que el
+        llamante pueda incluirlos en el resumen final del proceso.
+
+        Returns:
+            Una tupla ``(entregas, advertencias)``.
+        """
 
         deliveries: list[Delivery] = []
+        warnings: list[str] = []
 
         for delivery_key, entry in sorted(self._data.items()):
             if bool(entry.get("synchronized", False)):
                 continue
 
-            deliveries.append(
-                self._deserialize_delivery(
-                    delivery_key=delivery_key,
-                    entry=entry,
+            try:
+                deliveries.append(
+                    self._deserialize_delivery(
+                        delivery_key=delivery_key,
+                        entry=entry,
+                    )
                 )
-            )
+            except ValueError as error:
+                warnings.append(
+                    f"No se pudo recuperar la entrega pendiente {delivery_key}: "
+                    f"{error}"
+                )
 
-        return deliveries
+        return deliveries, warnings
 
     # ======================================================
     # DELIVERY SERIALIZATION
@@ -899,33 +882,15 @@ class Registry:
     def _load(self) -> dict[str, dict[str, Any]]:
         """Carga y valida el JSON, deteniéndose ante cualquier corrupción."""
 
-        print()
-        print("=" * 100)
-        print("CARGA DEL REGISTRY")
-        print("=" * 100)
-        print(f"Archivo        : {self._registry_file.name}")
-        print(f"Ruta           : {self._registry_file}")
-        print("Proceso        : Comprobando archivo del Registry...")
-
         if not self._registry_file.exists():
-            print("Archivo        : NO EXISTE")
-            print("Proceso        : Creando nuevo Registry...")
-
             self._registry_file.parent.mkdir(parents=True, exist_ok=True)
             self._atomic_write({})
-
-            print("Estado         : REGISTRY CREADO")
-            print("Registros      : 0")
-            print("=" * 100)
             return {}
 
         if not self._registry_file.is_file():
             raise RuntimeError(
                 f"La ruta del Registry no es un archivo: {self._registry_file}"
             )
-
-        print("Archivo        : ENCONTRADO")
-        print("Proceso        : Leyendo y validando registros...")
 
         try:
             with self._registry_file.open("r", encoding="utf-8") as file:
@@ -939,11 +904,6 @@ class Registry:
                 "La ejecución se ha detenido para evitar pérdida de información "
                 "o duplicación de cantidades."
             ) from error
-
-        print("Lectura        : COMPLETADA")
-        print(f"Registros      : {len(data)}")
-        print("Estado         : REGISTRY CARGADO CORRECTAMENTE")
-        print("=" * 100)
 
         return data
 
@@ -1236,68 +1196,3 @@ class Registry:
     def _ensure_open(self) -> None:
         if self._closed:
             raise RuntimeError("El Registry ya está cerrado.")
-
-    # ======================================================
-    # OUTPUT
-    # ======================================================
-
-    def _print_register_existing(
-        self,
-        delivery_key: str,
-        delivery_date: date,
-        sales_point_name: str,
-        synchronized: bool,
-    ) -> None:
-        print()
-        print("-" * 100)
-        print("REGISTRO DE LA ENTREGA")
-        print("-" * 100)
-        print(f"Identificador   : {delivery_key}")
-        print(f"Fecha           : {delivery_date.strftime('%d/%m/%Y')}")
-        print(f"Punto de venta  : {sales_point_name}")
-        print("Estado          : YA EXISTE EN EL REGISTRY")
-        print("Sincronización  : " f"{'COMPLETADA' if synchronized else 'PENDIENTE'}")
-        print("-" * 100)
-
-    def _print_registered(
-        self,
-        delivery_key: str,
-        delivery_date: date,
-        sales_point_name: str,
-        product_count: int,
-    ) -> None:
-        print()
-        print("-" * 100)
-        print("REGISTRO DE LA ENTREGA")
-        print("-" * 100)
-        print(f"Identificador   : {delivery_key}")
-        print(f"Fecha           : {delivery_date.strftime('%d/%m/%Y')}")
-        print(f"Año             : {delivery_date.year}")
-        print(f"Mes             : {MONTHS[delivery_date.month - 1]}")
-        print(f"Punto de venta  : {sales_point_name}")
-        print(f"Productos       : {product_count}")
-        print("Sincronización  : PENDIENTE")
-        print("Estado          : AÑADIDA AL REGISTRY")
-        print("-" * 100)
-
-    def _print_synchronization_update(
-        self,
-        delivery_key: str,
-        delivery_date: date,
-        sales_point_name: str,
-        previous_status: bool,
-    ) -> None:
-        print()
-        print("-" * 100)
-        print("ACTUALIZACIÓN DEL ESTADO DE SINCRONIZACIÓN")
-        print("-" * 100)
-        print(f"Identificador   : {delivery_key}")
-        print(f"Fecha           : {delivery_date.strftime('%d/%m/%Y')}")
-        print(f"Punto de venta  : {sales_point_name}")
-        print("Proceso         : Marcando entrega como sincronizada...")
-        print("Registrada      : SÍ")
-        print(
-            "Estado anterior : " f"{'SINCRONIZADO' if previous_status else 'PENDIENTE'}"
-        )
-        print("Estado actual   : SINCRONIZADO")
-        print("-" * 100)

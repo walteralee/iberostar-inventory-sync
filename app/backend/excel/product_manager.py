@@ -64,33 +64,20 @@ class ProductManager:
         # ==================================================
 
         if row is not None:
-            print(
-                f"Código: {product_code:<8} | "
-                f"EXISTENTE | "
-                f"Fila: {row:<5} | "
-                f"No se modifican sus datos"
-            )
-
             return row, False
 
         # ==================================================
         # PRODUCTO NUEVO
         # ==================================================
 
-        print(f"Código: {product_code:<8} | " f"NUEVO     | " f"Creando producto...")
-
         row = self._insert_product_row(
             worksheet,
         )
-
-        print(f"{'':18}│ Fila insertada          : {row}")
 
         self._copy_row_format(
             worksheet,
             row,
         )
-
-        print(f"{'':18}│ Formato copiado         : SÍ")
 
         self._fill_product_data(
             worksheet,
@@ -98,30 +85,17 @@ class ProductManager:
             product,
         )
 
-        print(f"{'':18}│ Código                  : {product_code}")
-        print(f"{'':18}│ Nombre                  : {product.name}")
-        print(f"{'':18}│ Stock actual            : 0")
-        print(f"{'':18}│ Formato                 : {product.format}")
-        print(f"{'':18}│ Precio                  : {product.price}")
-
         self._copy_product_formulas(
             worksheet,
             row,
         )
-
-        print(f"{'':18}│ Fórmulas adaptadas      : SÍ")
 
         self._update_total_formulas(
             worksheet,
             row,
         )
 
-        print(f"{'':18}│ Totales actualizados    : SÍ")
-
         product_index[product_code] = row
-
-        print(f"{'':18}│ Índice actualizado      : SÍ")
-        print(f"{'':18}└─ Resultado               : PRODUCTO CREADO")
 
         return row, True
 

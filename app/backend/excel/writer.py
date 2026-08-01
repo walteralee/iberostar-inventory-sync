@@ -65,15 +65,7 @@ class ExcelWriter:
             f"La celda {cell.coordinate}",
         )
 
-        print(f"{'':18}│ Fila destino            : {row}")
-        print(f"{'':18}│ Columna destino         : {column}")
-        print(f"{'':18}│ Valor anterior          : {current_value}")
-        print(f"{'':18}│ Cantidad añadida        : {quantity}")
-
         cell.value = current_value + quantity
-
-        print(f"{'':18}│ Valor final             : {cell.value}")
-        print(f"{'':18}│ Resultado               : CANTIDAD ACUMULADA")
 
     def _validate_arguments(
         self,

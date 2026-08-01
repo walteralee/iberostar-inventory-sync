@@ -21,7 +21,7 @@ Descripción:
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 import math
 import os
@@ -62,7 +62,14 @@ class _DeliveryResult:
 
 @dataclass(slots=True)
 class _SynchronizationTotals:
-    """Contadores acumulados del proceso completo."""
+    """
+    Contadores y mensajes de error acumulados del proceso completo.
+
+    Se devuelve desde ``Synchronizer.run()`` para que el llamante
+    (``main.py``) pueda combinarlo con el resumen del ``Importer`` y
+    mostrar un único resumen final consolidado, en vez de que cada
+    entrega imprima su propio progreso por consola.
+    """
 
     synchronized_deliveries: int = 0
     recovered_deliveries: int = 0
@@ -71,6 +78,7 @@ class _SynchronizationTotals:
     products_written: int = 0
     created_in_month: int = 0
     created_in_template: int = 0
+    error_messages: list[str] = field(default_factory=list)
 
 
 class Synchronizer:
@@ -127,40 +135,38 @@ class Synchronizer:
     def run(
         self,
         deliveries: list[Delivery],
-    ) -> None:
+    ) -> _SynchronizationTotals:
         """
         Ejecuta el proceso completo de sincronización.
 
-        Una entrega con errores no detiene las demás. Los errores
-        inesperados muestran su traza para no ocultar fallos internos.
+        Una entrega con errores no detiene las demás. Los errores no se
+        imprimen inmediatamente: se acumulan en los totales devueltos para
+        que el llamante pueda incluirlos en el resumen final del proceso.
+
+        Returns:
+            Los contadores y mensajes de error acumulados durante la
+            ejecución.
         """
 
         self._validate_deliveries_collection(deliveries)
 
-        if not deliveries:
-            self._print_empty_result()
-            return
-
         totals = _SynchronizationTotals()
 
-        self._print_received_deliveries(deliveries)
+        if not deliveries:
+            return totals
 
-        for delivery_index, delivery in enumerate(deliveries, start=1):
+        for delivery in deliveries:
             sales_point_name = self._safe_sales_point_name(delivery)
+            delivery_date_text = self._safe_delivery_date_text(delivery)
 
             try:
                 self._validate_delivery(delivery)
 
                 if self.registry.is_synchronized(delivery):
                     totals.skipped_deliveries += 1
-                    self._print_already_synchronized(delivery)
                     continue
 
-                result = self._synchronize_delivery(
-                    delivery=delivery,
-                    delivery_index=delivery_index,
-                    delivery_count=len(deliveries),
-                )
+                result = self._synchronize_delivery(delivery=delivery)
 
                 totals.synchronized_deliveries += 1
                 totals.products_written += result.written
@@ -172,26 +178,20 @@ class Synchronizer:
 
             except (FileNotFoundError, PermissionError, OSError, ValueError) as error:
                 totals.error_deliveries += 1
-                self._print_delivery_error(
-                    delivery_index=delivery_index,
-                    sales_point_name=sales_point_name,
-                    error=error,
-                    unexpected=False,
+                totals.error_messages.append(
+                    f"{delivery_date_text} | {sales_point_name or 'DESCONOCIDO'} | "
+                    f"{type(error).__name__}: {error}"
                 )
 
             except Exception as error:  # Protección por entrega, sin ocultar la traza.
                 totals.error_deliveries += 1
-                self._print_delivery_error(
-                    delivery_index=delivery_index,
-                    sales_point_name=sales_point_name,
-                    error=error,
-                    unexpected=True,
+                totals.error_messages.append(
+                    f"{delivery_date_text} | {sales_point_name or 'DESCONOCIDO'} | "
+                    f"ERROR INESPERADO {type(error).__name__}: {error}\n"
+                    f"{traceback.format_exc().rstrip()}"
                 )
 
-        self._print_general_summary(
-            deliveries=deliveries,
-            totals=totals,
-        )
+        return totals
 
     # ======================================================
     # SYNCHRONIZATION
@@ -200,8 +200,6 @@ class Synchronizer:
     def _synchronize_delivery(
         self,
         delivery: Delivery,
-        delivery_index: int,
-        delivery_count: int,
     ) -> _DeliveryResult:
         """Sincroniza una única entrega y devuelve sus contadores."""
 
@@ -214,20 +212,12 @@ class Synchronizer:
         payload_hash = build_payload_hash(delivery)
 
         self._ensure_registered(delivery)
-        self._print_delivery_header(
-            delivery=delivery,
-            delivery_index=delivery_index,
-            delivery_count=delivery_count,
-            delivery_key=delivery_key,
-        )
 
         try:
-            month_directory = self.template_manager.ensure_month(
+            self.template_manager.ensure_month(
                 year=delivery_date.year,
                 month=delivery_date.month,
             )
-
-            self._print_month_prepared(month_directory)
 
             excel_path = self.template_manager.get_excel_path(
                 sales_point=sales_point_name,
@@ -235,18 +225,9 @@ class Synchronizer:
                 month=delivery_date.month,
             )
 
-            self._print_excel_opening(
-                excel_path=excel_path,
-                sales_point_name=sales_point_name,
-            )
-
             workbook, worksheet = self.excel_reader.read(
                 workbook_path=excel_path,
             )
-
-            print("Libro          : ABIERTO CORRECTAMENTE")
-            print(f"Hoja utilizada : {worksheet.title}")
-            print("-" * 100)
 
             sync_sheet = self._get_or_create_sync_sheet(workbook)
             applied_hash = self._find_applied_delivery_hash(
@@ -260,7 +241,6 @@ class Synchronizer:
                     delivery_key=delivery_key,
                     expected_hash=payload_hash,
                     applied_hash=applied_hash,
-                    excel_path=excel_path,
                 )
 
             product_index = self._build_month_product_index(worksheet)
@@ -275,7 +255,6 @@ class Synchronizer:
                 delivery=delivery,
                 product_index=product_index,
                 day_column=day_column,
-                excel_path=excel_path,
             )
 
             template_path: Path | None = None
@@ -290,8 +269,6 @@ class Synchronizer:
                 )
 
                 result.created_in_template = self._update_template(
-                    template_path=template_path,
-                    template_workbook=template_workbook,
                     template_worksheet=template_worksheet,
                     new_products=new_products,
                 )
@@ -300,18 +277,14 @@ class Synchronizer:
             # el reintento simplemente encontrará esos productos ya creados.
             if template_workbook is not None and template_path is not None:
                 if result.created_in_template > 0:
-                    backup_path = self._create_backup(
+                    self._create_backup(
                         source_path=template_path,
                         category="templates",
                     )
-                    print(f"Backup         : {backup_path}")
                     self._atomic_save_workbook(
                         workbook=template_workbook,
                         target_path=template_path,
                     )
-                    print("Estado         : PLANTILLA GUARDADA ATÓMICAMENTE")
-                else:
-                    print("Estado         : PLANTILLA SIN CAMBIOS")
 
             # La marca se introduce en el mismo libro y se guarda junto con
             # las cantidades. Por eso ambas operaciones quedan vinculadas.
@@ -322,13 +295,7 @@ class Synchronizer:
                 payload_hash=payload_hash,
             )
 
-            self._print_monthly_save(excel_path)
-
-            backup_path = self._create_backup(
-                source_path=excel_path,
-                category="monthly",
-            )
-            print(f"Backup         : {backup_path}")
+            self._create_backup(source_path=excel_path, category="monthly")
 
             self._atomic_save_workbook(
                 workbook=workbook,
@@ -339,12 +306,6 @@ class Synchronizer:
             # el Registry. Si este guardado falla, el marcador del Excel
             # impedirá volver a sumar cantidades en el siguiente intento.
             self._mark_registry_synchronized(delivery)
-
-            self._print_delivery_summary(
-                delivery=delivery,
-                excel_path=excel_path,
-                result=result,
-            )
 
             return result
 
@@ -361,7 +322,6 @@ class Synchronizer:
         delivery_key: str,
         expected_hash: str,
         applied_hash: str,
-        excel_path: Path,
     ) -> _DeliveryResult:
         """
         Repara el Registry sin volver a escribir una entrega que ya
@@ -375,20 +335,7 @@ class Synchronizer:
                 f"Identificador: {delivery_key}. No se ha modificado el Excel."
             )
 
-        print()
-        print("=" * 100)
-        print("ENTREGA YA APLICADA EN EL EXCEL")
-        print("=" * 100)
-        print(f"Identificador  : {delivery_key}")
-        print(f"Archivo        : {excel_path.name}")
-        print("Cantidades     : NO SE VUELVEN A ESCRIBIR")
-        print("Proceso        : Reparando estado del Registry...")
-
         self._mark_registry_synchronized(delivery)
-
-        print("Registry       : SINCRONIZADO")
-        print("Resultado      : ENTREGA RECUPERADA SIN DUPLICADOS")
-        print("=" * 100)
 
         return _DeliveryResult(recovered_from_excel=True)
 
@@ -400,23 +347,11 @@ class Synchronizer:
         self,
         worksheet: Worksheet,
     ) -> dict[str, int]:
-        """Construye y anuncia el índice del Excel mensual."""
+        """Construye el índice código → fila del Excel mensual."""
 
-        print()
-        print("-" * 100)
-        print("7.3 PREPARACIÓN DE LA BÚSQUEDA DE PRODUCTOS")
-        print("-" * 100)
-        print("Proceso        : Construyendo índice código → fila...")
-
-        product_index = self.excel_finder.build_product_index(
+        return self.excel_finder.build_product_index(
             worksheet=worksheet,
         )
-
-        print(f"Productos      : {len(product_index)}")
-        print("Estado         : ÍNDICE DISPONIBLE")
-        print("-" * 100)
-
-        return product_index
 
     def _validate_day_column(
         self,
@@ -425,16 +360,7 @@ class Synchronizer:
     ) -> int:
         """Localiza la columna del día y valida su cabecera real."""
 
-        print()
-        print("-" * 100)
-        print("7.4 LOCALIZACIÓN DEL DÍA DE LA ENTREGA")
-        print("-" * 100)
-
         day_column = self.excel_finder.find_day_column(day=day)
-
-        print(f"Día            : {day}")
-        print(f"Columna        : {day_column}")
-        print("Proceso        : Validando cabecera del día...")
 
         day_header_value = worksheet.cell(
             row=DAY_HEADER_ROW,
@@ -447,10 +373,6 @@ class Synchronizer:
                 f"Valor encontrado: {day_header_value!r}"
             )
 
-        print(f"Cabecera       : {day_header_value}")
-        print("Estado         : COLUMNA DEL DÍA VALIDADA")
-        print("-" * 100)
-
         return day_column
 
     def _write_products(
@@ -459,30 +381,13 @@ class Synchronizer:
         delivery: Delivery,
         product_index: dict[str, int],
         day_column: int,
-        excel_path: Path,
     ) -> tuple[_DeliveryResult, list[Product]]:
         """Busca, crea y escribe todos los productos de una entrega."""
 
         result = _DeliveryResult()
         new_products: list[Product] = []
 
-        print()
-        print("=" * 100)
-        print("7.5 SINCRONIZACIÓN DE PRODUCTOS")
-        print("=" * 100)
-        print(f"Excel          : {excel_path.name}")
-        print(f"Día            : {self._as_date(delivery.delivery_date).day}")
-        print(f"Columna        : {day_column}")
-        print(f"Productos      : {len(delivery.products)}")
-        print("-" * 100)
-
-        for position, product in enumerate(delivery.products, start=1):
-            self._print_product_header(
-                product=product,
-                position=position,
-                total=len(delivery.products),
-            )
-
+        for product in delivery.products:
             row, created = self.product_manager.find_or_create(
                 worksheet=worksheet,
                 product_index=product_index,
@@ -492,17 +397,8 @@ class Synchronizer:
             if created:
                 new_products.append(product)
                 result.created_in_month += 1
-                print("Existía        : NO")
-                print(f"Fila creada    : {row}")
-                print("Estado         : NUEVO PRODUCTO")
             else:
                 result.existing_in_month += 1
-                print("Existía        : SÍ")
-                print(f"Fila utilizada : {row}")
-                print("Estado         : PRODUCTO EXISTENTE")
-
-            print(f"Escritura      : Acumulando {product.quantity} unidades")
-            print(f"Destino        : Fila {row} | Columna {day_column}")
 
             self.excel_writer.write(
                 worksheet=worksheet,
@@ -512,41 +408,15 @@ class Synchronizer:
             )
 
             result.written += 1
-            print("Resultado      : CANTIDAD ESCRITA CORRECTAMENTE")
-            print("-" * 100)
-
-        print()
-        print("=" * 100)
-        print("RESULTADO DE LA SINCRONIZACIÓN DE PRODUCTOS")
-        print("=" * 100)
-        print(f"Productos recibidos : {len(delivery.products)}")
-        print(f"Productos existentes: {result.existing_in_month}")
-        print(f"Productos nuevos    : {result.created_in_month}")
-        print(f"Productos escritos  : {result.written}")
-        print("=" * 100)
 
         return result, new_products
 
     def _update_template(
         self,
-        template_path: Path,
-        template_workbook: Workbook,
         template_worksheet: Worksheet,
         new_products: list[Product],
     ) -> int:
         """Añade a la plantilla los productos creados en el mensual."""
-
-        del template_workbook  # El libro se utiliza para el guardado posterior.
-
-        print()
-        print("=" * 100)
-        print("7.6 ACTUALIZACIÓN DE LA PLANTILLA ORIGINAL")
-        print("=" * 100)
-        print(f"Plantilla      : {template_path.name}")
-        print(f"Ruta           : {template_path}")
-        print(f"Productos nuevos detectados: {len(new_products)}")
-        print("-" * 100)
-        print("Proceso        : Construyendo índice de la plantilla...")
 
         template_product_index = self.excel_finder.build_product_index(
             worksheet=template_worksheet,
@@ -554,15 +424,8 @@ class Synchronizer:
 
         created_count = 0
 
-        for position, product in enumerate(new_products, start=1):
-            print()
-            print("-" * 100)
-            print(f"PRODUCTO NUEVO {position:03d} DE {len(new_products):03d}")
-            print("-" * 100)
-            print(f"Código         : {product.code}")
-            print(f"Nombre         : {product.name}")
-
-            template_row, created = self.product_manager.find_or_create(
+        for product in new_products:
+            _, created = self.product_manager.find_or_create(
                 worksheet=template_worksheet,
                 product_index=template_product_index,
                 product=product,
@@ -570,21 +433,6 @@ class Synchronizer:
 
             if created:
                 created_count += 1
-                print("Existía        : NO")
-                print(f"Fila creada    : {template_row}")
-                print("Resultado      : AÑADIDO A LA PLANTILLA")
-            else:
-                print("Existía        : SÍ")
-                print(f"Fila utilizada : {template_row}")
-                print("Resultado      : YA EXISTÍA")
-
-        print()
-        print("-" * 100)
-        print("RESULTADO DE LA ACTUALIZACIÓN DE LA PLANTILLA")
-        print("-" * 100)
-        print(f"Plantilla          : {template_path.name}")
-        print(f"Productos revisados: {len(new_products)}")
-        print(f"Productos añadidos : {created_count}")
 
         return created_count
 
@@ -1009,209 +857,15 @@ class Synchronizer:
         name = getattr(sales_point, "name", "")
         return name.strip() if isinstance(name, str) else ""
 
-    # ======================================================
-    # OUTPUT
-    # ======================================================
-
-    def _print_empty_result(self) -> None:
-        print()
-        print("=" * 100)
-        print("6. INICIO DEL PROCESO DE SINCRONIZACIÓN")
-        print("=" * 100)
-        print("Entregas recibidas: 0")
-        print("Estado            : NO HAY ENTREGAS PENDIENTES")
-        print("=" * 100)
-
-    def _print_received_deliveries(
+    def _safe_delivery_date_text(
         self,
-        deliveries: list[Delivery],
-    ) -> None:
-        print()
-        print("=" * 100)
-        print("6. INICIO DEL PROCESO DE SINCRONIZACIÓN")
-        print("=" * 100)
-        print(f"Entregas recibidas: {len(deliveries)}")
-        print("-" * 100)
+        delivery: object,
+    ) -> str:
+        """Obtiene la fecha en texto sin provocar errores de presentación."""
 
-        for index, delivery in enumerate(deliveries, start=1):
-            delivery_date = getattr(delivery, "delivery_date", None)
-            formatted_date = (
-                delivery_date.strftime("%d/%m/%Y")
-                if isinstance(delivery_date, (date, datetime))
-                else "FECHA DESCONOCIDA"
-            )
-            sales_point_name = self._safe_sales_point_name(delivery) or "DESCONOCIDO"
-            print(f"{index:03d} | {formatted_date} | {sales_point_name}")
+        delivery_date = getattr(delivery, "delivery_date", None)
 
-        print("=" * 100)
+        if isinstance(delivery_date, (date, datetime)):
+            return delivery_date.strftime("%d/%m/%Y")
 
-    def _print_already_synchronized(
-        self,
-        delivery: Delivery,
-    ) -> None:
-        print()
-        print("-" * 100)
-        print("ENTREGA OMITIDA")
-        print("-" * 100)
-        print(
-            f"Fecha          : {self._as_date(delivery.delivery_date).strftime('%d/%m/%Y')}"
-        )
-        print(f"Punto de venta : {delivery.sales_point.name.strip()}")
-        print("Estado         : YA SINCRONIZADA")
-        print("-" * 100)
-
-    def _print_delivery_header(
-        self,
-        delivery: Delivery,
-        delivery_index: int,
-        delivery_count: int,
-        delivery_key: str,
-    ) -> None:
-        print()
-        print()
-        print("=" * 100)
-        print(
-            f"7. SINCRONIZACIÓN DE LA ENTREGA "
-            f"{delivery_index:03d} DE {delivery_count:03d}"
-        )
-        print("=" * 100)
-        print(f"Identificador  : {delivery_key}")
-        print(
-            f"Fecha          : {self._as_date(delivery.delivery_date).strftime('%d/%m/%Y')}"
-        )
-        print(f"Punto de venta : {delivery.sales_point.name.strip()}")
-        print(f"Productos      : {len(delivery.products)}")
-        print("=" * 100)
-
-    def _print_month_prepared(
-        self,
-        month_directory: Path,
-    ) -> None:
-        print()
-        print("-" * 100)
-        print("RESULTADO DE LA PREPARACIÓN MENSUAL")
-        print("-" * 100)
-        print(f"Carpeta        : {month_directory}")
-        print("Estado         : EXCEL MENSUALES DISPONIBLES")
-        print("-" * 100)
-
-    def _print_excel_opening(
-        self,
-        excel_path: Path,
-        sales_point_name: str,
-    ) -> None:
-        print()
-        print("-" * 100)
-        print("7.2 APERTURA DEL EXCEL MENSUAL")
-        print("-" * 100)
-        print(f"Punto de venta : {sales_point_name}")
-        print(f"Archivo        : {excel_path.name}")
-        print(f"Ruta           : {excel_path}")
-        print("Proceso        : Abriendo libro de Excel...")
-
-    def _print_product_header(
-        self,
-        product: Product,
-        position: int,
-        total: int,
-    ) -> None:
-        print()
-        print("-" * 100)
-        print(f"PRODUCTO {position:03d} DE {total:03d}")
-        print("-" * 100)
-        print(f"Código         : {product.code}")
-        print(f"Nombre         : {product.name}")
-        print(f"Formato        : {product.format}")
-        print(f"Precio         : {product.price}")
-        print(f"Cantidad       : {product.quantity}")
-        print("Proceso        : Buscando producto en el Excel...")
-
-    def _print_monthly_save(
-        self,
-        excel_path: Path,
-    ) -> None:
-        print()
-        print("=" * 100)
-        print("7.7 GUARDADO DEL EXCEL MENSUAL")
-        print("=" * 100)
-        print(f"Archivo        : {excel_path.name}")
-        print(f"Ruta           : {excel_path}")
-        print("Proceso        : Creando backup y guardando atómicamente...")
-
-    def _print_delivery_summary(
-        self,
-        delivery: Delivery,
-        excel_path: Path,
-        result: _DeliveryResult,
-    ) -> None:
-        print("Estado         : GUARDADO CORRECTAMENTE")
-        print("=" * 100)
-        print()
-        print("=" * 100)
-        print("RESUMEN DE LA ENTREGA")
-        print("=" * 100)
-        print(
-            f"Fecha                   : {self._as_date(delivery.delivery_date).strftime('%d/%m/%Y')}"
-        )
-        print(f"Punto de venta          : {delivery.sales_point.name.strip()}")
-        print(f"Excel mensual           : {excel_path.name}")
-        print(f"Productos recibidos     : {len(delivery.products)}")
-        print(f"Productos existentes    : {result.existing_in_month}")
-        print(f"Nuevos en Excel mensual : {result.created_in_month}")
-        print(f"Productos escritos      : {result.written}")
-        print(f"Nuevos en plantilla     : {result.created_in_template}")
-        print("Estado                  : SINCRONIZADA CORRECTAMENTE")
-        print("=" * 100)
-
-    def _print_delivery_error(
-        self,
-        delivery_index: int,
-        sales_point_name: str,
-        error: Exception,
-        unexpected: bool,
-    ) -> None:
-        print()
-        print("!" * 100)
-        print(f"ERROR DURANTE LA SINCRONIZACIÓN " f"DE LA ENTREGA {delivery_index:03d}")
-        print("!" * 100)
-        print(f"Punto de venta : {sales_point_name or 'DESCONOCIDO'}")
-        print("Estado         : ERROR")
-        print(f"Tipo           : {type(error).__name__}")
-        print(f"Motivo         : {error}")
-        print("Resultado      : ENTREGA NO SINCRONIZADA")
-
-        if unexpected:
-            print("-" * 100)
-            print("TRAZA DEL ERROR INESPERADO")
-            print("-" * 100)
-            print(traceback.format_exc().rstrip())
-
-        print("!" * 100)
-
-    def _print_general_summary(
-        self,
-        deliveries: list[Delivery],
-        totals: _SynchronizationTotals,
-    ) -> None:
-        print()
-        print()
-        print("=" * 100)
-        print("8. RESUMEN GENERAL DE SINCRONIZACIÓN")
-        print("=" * 100)
-        print(f"Entregas recibidas         : {len(deliveries)}")
-        print(f"Entregas sincronizadas     : {totals.synchronized_deliveries}")
-        print(f"Recuperadas desde Excel    : {totals.recovered_deliveries}")
-        print(f"Ya sincronizadas           : {totals.skipped_deliveries}")
-        print(f"Entregas con errores       : {totals.error_deliveries}")
-        print("-" * 100)
-        print(f"Productos escritos         : {totals.products_written}")
-        print(f"Nuevos en Excel mensuales  : {totals.created_in_month}")
-        print(f"Nuevos en plantillas       : {totals.created_in_template}")
-        print("-" * 100)
-
-        if totals.error_deliveries == 0:
-            print("Estado final               : SINCRONIZACIÓN COMPLETADA")
-        else:
-            print("Estado final               : COMPLETADA CON ERRORES")
-
-        print("=" * 100)
+        return "FECHA DESCONOCIDA"

@@ -62,25 +62,10 @@ class ExcelTemplateManager:
 
         month_directory = MONTHLY_EXCELS_DIR / str(year) / month_name
 
-        print()
-        print("=" * 100)
-        print("PREPARACIÓN DE LOS EXCEL MENSUALES")
-        print("=" * 100)
-        print(f"Año              : {year}")
-        print(f"Mes              : {month_name.title()}")
-        print(f"Carpeta mensual  : {month_directory}")
-        print("-" * 100)
-        print("Proceso          : Preparando carpeta mensual...")
-
         month_directory.mkdir(
             parents=True,
             exist_ok=True,
         )
-
-        print("Carpeta mensual  : PREPARADA CORRECTAMENTE")
-        print("-" * 100)
-        print("COMPROBACIÓN DE LOS EXCEL")
-        print("-" * 100)
 
         created_count = 0
         existing_count = 0
@@ -102,8 +87,6 @@ class ExcelTemplateManager:
 
                 existing_count += 1
 
-                print(f"{index:03d} | " f"{destination.name:<50} | " "YA EXISTÍA")
-
                 continue
 
             shutil.copy2(
@@ -112,18 +95,6 @@ class ExcelTemplateManager:
             )
 
             created_count += 1
-
-            print(
-                f"{index:03d} | " f"{destination.name:<50} | " "CREADO DESDE PLANTILLA"
-            )
-
-        print("-" * 100)
-        print(f"Excel comprobados: {len(EXCEL_TEMPLATES)}")
-        print(f"Excel creados    : {created_count}")
-        print(f"Excel existentes : {existing_count}")
-        print(f"Carpeta preparada: {month_directory}")
-        print("Estado           : EXCEL MENSUALES DISPONIBLES")
-        print("=" * 100)
 
         return month_directory
 

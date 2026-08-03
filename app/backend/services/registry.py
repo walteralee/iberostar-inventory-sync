@@ -75,6 +75,14 @@ class Registry:
     _SCHEMA_VERSION = 2
     _HASH_ALGORITHM = "sha256"
 
+    # Cantidad de copias de seguridad con marca de tiempo que se conservan.
+    # Antes se sobrescribía una única "imported_deliveries.previous.json" en
+    # cada guardado, así que dos guardados seguidos con datos incorrectos
+    # bastaban para perder la última copia buena. Ahora sigue el mismo
+    # esquema de retención por timestamp que Synchronizer usa para los
+    # Excel mensuales.
+    _BACKUP_RETENTION_COUNT = 15
+
     def __init__(
         self,
         *,
@@ -936,8 +944,9 @@ class Registry:
                 os.fsync(file.fileno())
 
             if self._registry_file.is_file():
+                timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
                 backup_file = self._backup_directory / (
-                    f"{self._registry_file.stem}.previous"
+                    f"{self._registry_file.stem}_{timestamp}"
                     f"{self._registry_file.suffix}"
                 )
                 backup_temporary = backup_file.with_name(
@@ -951,12 +960,32 @@ class Registry:
                     if backup_temporary.exists():
                         backup_temporary.unlink()
 
+                self._prune_old_backups()
+
             temporary_file.replace(self._registry_file)
             self._fsync_directory(self._registry_file.parent)
 
         finally:
             if temporary_file.exists():
                 temporary_file.unlink()
+
+    def _prune_old_backups(self) -> None:
+        """Elimina los backups del Registry más antiguos por encima del límite."""
+
+        existing_backups = sorted(
+            self._backup_directory.glob(
+                f"{self._registry_file.stem}_*{self._registry_file.suffix}"
+            ),
+            key=lambda path: path.name,
+        )
+
+        excess_count = len(existing_backups) - self._BACKUP_RETENTION_COUNT
+
+        if excess_count <= 0:
+            return
+
+        for old_backup in existing_backups[:excess_count]:
+            old_backup.unlink(missing_ok=True)
 
     def _acquire_process_lock(self) -> None:
         """Obtiene un bloqueo no bloqueante válido en Windows y Unix."""

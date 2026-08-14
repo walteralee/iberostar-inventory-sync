@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Iberostar · Gestor de pedidos</title>
+  <link rel="stylesheet" href="styles/main.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar__brand">
+      <span class="topbar__logo">IB</span>
+      <div>
+        <h1>Iberostar Inventory Synchronizer</h1>
+        <p class="topbar__subtitle">Gestor de pedidos · Economato</p>
+      </div>
+    </div>
+    <nav class="tabs" role="tablist">
+      <button class="tabs__button is-active" data-tab="sync" role="tab" aria-selected="true">
+        Sincronizar
+      </button>
+      <button class="tabs__button" data-tab="export" role="tab" aria-selected="false">
+        Exportar
+      </button>
+    </nav>
+  </header>
+
+  <main class="content">
+
+    <!-- ================= SINCRONIZAR ================= -->
+    <section id="panel-sync" class="panel is-active" role="tabpanel">
+      <div class="card">
+        <h2>Importar y sincronizar Excel de Economato</h2>
+        <p class="card__hint">
+          Selecciona uno o varios informes de Economato. Se agruparán por fecha y
+          punto de venta, y se volcarán automáticamente en los Excel mensuales.
+        </p>
+
+        <label for="file-input" id="dropzone" class="dropzone">
+          <input type="file" id="file-input" accept=".xlsx" multiple hidden />
+          <span class="dropzone__icon">⇪</span>
+          <span class="dropzone__text">
+            Arrastra aquí los Excel de Economato o haz clic para seleccionarlos
+          </span>
+        </label>
+
+        <ul id="file-list" class="file-list"></ul>
+
+        <div class="actions">
+          <button id="sync-button" class="btn btn--primary" disabled>
+            Sincronizar
+          </button>
+          <button id="clear-files-button" class="btn btn--ghost" disabled>
+            Quitar todos
+          </button>
+        </div>
+
+        <div id="sync-status" class="status" hidden></div>
+      </div>
+
+      <div id="sync-results"></div>
+    </section>
+
+    <!-- ================= EXPORTAR ================= -->
+    <section id="panel-export" class="panel" role="tabpanel">
+      <div class="card">
+        <h2>Exportar Excel mensual</h2>
+        <p class="card__hint">
+          Descarga el Excel de control de stock ya sincronizado de un punto de
+          venta, mes y año concretos.
+        </p>
+
+        <div class="form-grid">
+          <label class="field">
+            <span>Punto de venta</span>
+            <select id="export-sales-point"></select>
+          </label>
+
+          <label class="field">
+            <span>Año</span>
+            <select id="export-year"></select>
+          </label>
+
+          <label class="field">
+            <span>Mes</span>
+            <select id="export-month"></select>
+          </label>
+        </div>
+
+        <div class="actions">
+          <button id="export-button" class="btn btn--primary">Descargar Excel</button>
+        </div>
+
+        <div id="export-status" class="status" hidden></div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="footer">
+    <span>Iberostar Inventory Synchronizer</span>
+  </footer>
+
+  <script src="services/api.js"></script>
+  <script src="pages/app.js"></script>
+</body>
+</html>

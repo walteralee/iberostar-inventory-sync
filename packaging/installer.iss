@@ -1,10 +1,12 @@
-; Instalador de Windows (Inno Setup 6).
+﻿; Instalador de Windows (Inno Setup 6).
 ;
 ; Lo ejecuta scripts/build.py después de PyInstaller:
 ;     ISCC /DAppVersion=X.Y.Z /Odist packaging\installer.iss
 ;
-; Se instala por usuario (no pide permisos de administrador) y al
-; desinstalar NO borra los datos de Documentos\Iberostar Gestor de Pedidos.
+; Se instala por usuario (no pide permisos de administrador). Al
+; desinstalar borra siempre la caché de la ventana y pregunta si borrar
+; también los datos de Documentos\Iberostar Gestor de Pedidos (por
+; defecto, No).
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"
@@ -55,3 +57,28 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopico
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
+
+[UninstallDelete]
+; Caché de WebView2 (ver _webview_storage_dir en app/backend/desktop.py).
+Type: filesandordirs; Name: "{localappdata}\{#AppName}"
+
+[Code]
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  DataDir: String;
+begin
+  if CurUninstallStep <> usPostUninstall then
+    Exit;
+
+  DataDir := ExpandConstant('{userdocs}\{#AppName}');
+
+  if UninstallSilent or not DirExists(DataDir) then
+    Exit;
+
+  if MsgBox('¿Quieres borrar también tus datos?' + #13#10 + #13#10 +
+            DataDir + #13#10 + #13#10 +
+            'Se eliminarán los Excel mensuales, las plantillas y las copias ' +
+            'de seguridad. Esta acción no se puede deshacer.',
+            mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
+    DelTree(DataDir, True, True, True);
+end;

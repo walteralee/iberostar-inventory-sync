@@ -245,7 +245,26 @@ def _run_native_window(server: _LocalServer) -> None:
     )
     desktop_api.attach(window)
 
-    webview.start(gui="edgechromium", private_mode=False, storage_path=None)
+    webview.start(
+        gui="edgechromium",
+        private_mode=False,
+        storage_path=str(_webview_storage_dir()),
+    )
+
+
+def _webview_storage_dir() -> Path:
+    """
+    Caché de WebView2 en una carpeta propia y reconocible
+    (%LOCALAPPDATA%\\Iberostar Gestor de Pedidos\\WebView), que el
+    desinstalador borra. Por defecto pywebview usaría %APPDATA%\\pywebview.
+    """
+
+    from config.settings import APP_DISPLAY_NAME
+
+    local_appdata = os.environ.get("LOCALAPPDATA", "").strip()
+    base = Path(local_appdata) if local_appdata else Path.home() / "AppData" / "Local"
+
+    return base / APP_DISPLAY_NAME / "WebView"
 
 
 def _run_in_browser(server: _LocalServer) -> None:

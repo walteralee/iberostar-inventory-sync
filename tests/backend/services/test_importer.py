@@ -2,8 +2,7 @@
 No existía ningún test para Importer pese a ser la puerta de entrada de
 todos los datos: agrupación por fecha/punto de venta, parseo de números
 en formato español y detección de duplicados. Todos los Excel de origen
-se escriben en tmp_path y se pasan explícitamente a Importer.run(), para
-no disparar nunca el diálogo de selección de archivos (tkinter).
+se escriben en tmp_path y se pasan explícitamente a Importer.run().
 """
 
 from datetime import date

@@ -1,31 +1,30 @@
 @echo off
 setlocal
-
-title Iberostar Inventory Synchronizer
+rem ==================================================================
+rem  Arranca la aplicacion desde el codigo fuente (modo desarrollo).
+rem  La primera vez crea el entorno virtual e instala dependencias.
+rem  Para el usuario final se distribuye el instalador (ver README).
+rem ==================================================================
 
 cd /d "%~dp0"
+title Iberostar Gestor de Pedidos (desarrollo)
 
-echo.
-echo ==================================================
-echo         IBEROSTAR INVENTORY SYNCHRONIZER
-echo ==================================================
-echo.
-
-python --version >nul 2>&1
-if errorlevel 1 (
-    echo [ERROR] Python no esta instalado o no esta en el PATH.
-    echo.
-    pause
-    exit /b 1
+if not exist ".venv\Scripts\python.exe" (
+    where python >nul 2>&1 || (
+        echo [ERROR] Python 3.11 o superior no esta instalado o no esta en el PATH.
+        pause
+        exit /b 1
+    )
+    echo Preparando el entorno virtual por primera vez...
+    python -m venv .venv || goto :error
+    ".venv\Scripts\python.exe" -m pip install --quiet --upgrade pip || goto :error
+    ".venv\Scripts\python.exe" -m pip install --quiet -r requirements-dev.txt || goto :error
 )
 
-python app\backend\main.py
+".venv\Scripts\python.exe" app\backend\desktop.py
+exit /b %errorlevel%
 
-echo.
-echo ==================================================
-echo              EXECUTION FINISHED
-echo ==================================================
-echo.
-
+:error
+echo [ERROR] No se pudo preparar el entorno. Revisa los mensajes anteriores.
 pause
-endlocal
+exit /b 1

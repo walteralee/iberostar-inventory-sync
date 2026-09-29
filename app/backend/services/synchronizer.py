@@ -56,8 +56,7 @@ class _DeliveryResult:
     written: int = 0
     existing_in_month: int = 0
     created_in_month: int = 0
-    created_in_template: int = 0
-    recovered_from_excel: bool = False
+    new_products: list[Product] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -66,9 +65,8 @@ class _SynchronizationTotals:
     Contadores y mensajes de error acumulados del proceso completo.
 
     Se devuelve desde ``Synchronizer.run()`` para que el llamante
-    (``main.py``) pueda combinarlo con el resumen del ``Importer`` y
-    mostrar un único resumen final consolidado, en vez de que cada
-    entrega imprima su propio progreso por consola.
+    (``services.sync_pipeline``) pueda combinarlo con el resumen del
+    ``Importer`` y mostrar un único resumen final consolidado.
     """
 
     synchronized_deliveries: int = 0
@@ -128,6 +126,9 @@ class Synchronizer:
         self.template_manager = template_manager or ExcelTemplateManager()
         self.product_manager = product_manager or ProductManager()
 
+        # Entrega que falló durante la última aplicación en memoria.
+        self._last_failed_ids: set[int] = set()
+
     # ======================================================
     # PUBLIC
     # ======================================================
@@ -155,10 +156,13 @@ class Synchronizer:
         if not deliveries:
             return totals
 
-        for delivery in deliveries:
-            sales_point_name = self._safe_sales_point_name(delivery)
-            delivery_date_text = self._safe_delivery_date_text(delivery)
+        # Las entregas se agrupan por Excel mensual (punto de venta + mes)
+        # para abrir, respaldar y guardar cada libro una sola vez, en vez
+        # de una vez por entrega. Con informes de varios meses la
+        # diferencia es de horas a minutos.
+        groups: dict[tuple[str, int, int], list[Delivery]] = {}
 
+        for delivery in deliveries:
             try:
                 self._validate_delivery(delivery)
 
@@ -166,166 +170,283 @@ class Synchronizer:
                     totals.skipped_deliveries += 1
                     continue
 
-                result = self._synchronize_delivery(delivery=delivery)
-
-                totals.synchronized_deliveries += 1
-                totals.products_written += result.written
-                totals.created_in_month += result.created_in_month
-                totals.created_in_template += result.created_in_template
-
-                if result.recovered_from_excel:
-                    totals.recovered_deliveries += 1
-
-            except (FileNotFoundError, PermissionError, OSError, ValueError) as error:
-                totals.error_deliveries += 1
-                totals.error_messages.append(
-                    f"{delivery_date_text} | {sales_point_name or 'DESCONOCIDO'} | "
-                    f"{type(error).__name__}: {error}"
+                delivery_date = self._as_date(delivery.delivery_date)
+                group_key = (
+                    delivery.sales_point.name.strip(),
+                    delivery_date.year,
+                    delivery_date.month,
                 )
+                groups.setdefault(group_key, []).append(delivery)
 
-            except Exception as error:  # Protección por entrega, sin ocultar la traza.
-                totals.error_deliveries += 1
-                totals.error_messages.append(
-                    f"{delivery_date_text} | {sales_point_name or 'DESCONOCIDO'} | "
-                    f"ERROR INESPERADO {type(error).__name__}: {error}\n"
-                    f"{traceback.format_exc().rstrip()}"
-                )
+            except Exception as error:
+                self._record_error(totals, delivery, error)
+
+        for group in groups.values():
+            try:
+                self._synchronize_group(group, totals)
+
+            except Exception as error:  # Fallo del libro completo.
+                for delivery in group:
+                    self._record_error(totals, delivery, error)
 
         return totals
+
+    def _record_error(
+        self,
+        totals: _SynchronizationTotals,
+        delivery: Delivery,
+        error: Exception,
+    ) -> None:
+        sales_point_name = self._safe_sales_point_name(delivery) or "DESCONOCIDO"
+        delivery_date_text = self._safe_delivery_date_text(delivery)
+
+        totals.error_deliveries += 1
+
+        if isinstance(error, (OSError, ValueError)):
+            totals.error_messages.append(
+                f"{delivery_date_text} | {sales_point_name} | "
+                f"{type(error).__name__}: {error}"
+            )
+        else:
+            # Error de programación: se conserva la traza completa.
+            totals.error_messages.append(
+                f"{delivery_date_text} | {sales_point_name} | "
+                f"ERROR INESPERADO {type(error).__name__}: {error}\n"
+                + "".join(
+                    traceback.format_exception(error)
+                ).rstrip()
+            )
 
     # ======================================================
     # SYNCHRONIZATION
     # ======================================================
 
-    def _synchronize_delivery(
+    def _synchronize_group(
         self,
-        delivery: Delivery,
-    ) -> _DeliveryResult:
-        """Sincroniza una única entrega y devuelve sus contadores."""
+        deliveries: list[Delivery],
+        totals: _SynchronizationTotals,
+    ) -> None:
+        """
+        Sincroniza todas las entregas de un mismo Excel mensual.
 
-        workbook: Workbook | None = None
-        template_workbook: Workbook | None = None
+        Garantías (las mismas que al sincronizar entrega a entrega):
+            - Las entregas se registran en el Registry antes de tocar Excel.
+            - Cada entrega aplicada deja su marcador en la hoja interna,
+              que se guarda en el mismo archivo que las cantidades.
+            - Una entrega con errores no se escribe y no impide las demás.
+            - El Registry solo se marca después de guardar el Excel.
+        """
 
-        sales_point_name = delivery.sales_point.name.strip()
-        delivery_date = self._as_date(delivery.delivery_date)
-        delivery_key = build_delivery_key(delivery)
-        payload_hash = build_payload_hash(delivery)
+        first_delivery = deliveries[0]
+        sales_point_name = first_delivery.sales_point.name.strip()
+        first_date = self._as_date(first_delivery.delivery_date)
 
-        self._ensure_registered(delivery)
+        self._ensure_registered_many(deliveries)
+
+        self.template_manager.ensure_month(
+            year=first_date.year,
+            month=first_date.month,
+        )
+
+        excel_path = self.template_manager.get_excel_path(
+            sales_point=sales_point_name,
+            year=first_date.year,
+            month=first_date.month,
+        )
+
+        failed: set[int] = set()
+
+        while True:
+            outcome = self._apply_group_in_memory(
+                excel_path=excel_path,
+                deliveries=[d for d in deliveries if id(d) not in failed],
+                totals=totals,
+            )
+
+            if outcome is None:
+                # Una entrega falló a mitad de escritura: el libro en
+                # memoria ya no es fiable. Se descarta y se reaplica el
+                # resto desde el archivo en disco, sin la entrega fallida.
+                failed.update(self._last_failed_ids)
+                continue
+
+            workbook, applied, recovered = outcome
+            break
+
+        created_in_template = 0
 
         try:
-            self.template_manager.ensure_month(
-                year=delivery_date.year,
-                month=delivery_date.month,
-            )
+            if applied:
+                new_products = [
+                    product
+                    for _, result in applied
+                    for product in result.new_products
+                ]
 
-            excel_path = self.template_manager.get_excel_path(
-                sales_point=sales_point_name,
-                year=delivery_date.year,
-                month=delivery_date.month,
-            )
+                if new_products:
+                    created_in_template = self._update_template_file(
+                        sales_point_name=sales_point_name,
+                        new_products=new_products,
+                    )
 
-            workbook, worksheet = self.excel_reader.read(
-                workbook_path=excel_path,
-            )
+                self._create_backup(source_path=excel_path, category="monthly")
+                self._atomic_save_workbook(
+                    workbook=workbook,
+                    target_path=excel_path,
+                )
+        finally:
+            workbook.close()
 
+        # Solo después de confirmar el Excel en disco se actualiza el
+        # Registry. Si este guardado falla, los marcadores del Excel
+        # impedirán volver a sumar cantidades en el siguiente intento.
+        confirmed = [delivery for delivery, _ in applied] + recovered
+
+        try:
+            self._mark_registry_synchronized_many(confirmed)
+        except Exception as error:
+            for delivery in confirmed:
+                self._record_error(totals, delivery, error)
+            return
+
+        for _, result in applied:
+            totals.synchronized_deliveries += 1
+            totals.products_written += result.written
+            totals.created_in_month += result.created_in_month
+
+        totals.created_in_template += created_in_template
+        totals.synchronized_deliveries += len(recovered)
+        totals.recovered_deliveries += len(recovered)
+
+    def _apply_group_in_memory(
+        self,
+        excel_path: Path,
+        deliveries: list[Delivery],
+        totals: _SynchronizationTotals,
+    ) -> tuple[Workbook, list[tuple[Delivery, _DeliveryResult]], list[Delivery]] | None:
+        """
+        Abre el Excel mensual y aplica en memoria las entregas recibidas.
+
+        Devuelve None si una entrega falla después de haber empezado a
+        modificar el libro; en ese caso ``_last_failed_ids`` indica cuál.
+        """
+
+        self._last_failed_ids = set()
+
+        workbook, worksheet = self.excel_reader.read(workbook_path=excel_path)
+
+        try:
             sync_sheet = self._get_or_create_sync_sheet(workbook)
-            applied_hash = self._find_applied_delivery_hash(
-                sync_sheet=sync_sheet,
-                delivery_key=delivery_key,
-            )
-
-            if applied_hash is not None:
-                return self._recover_already_applied_delivery(
-                    delivery=delivery,
-                    delivery_key=delivery_key,
-                    expected_hash=payload_hash,
-                    applied_hash=applied_hash,
-                )
-
             product_index = self._build_month_product_index(worksheet)
-            day = delivery_date.day
-            day_column = self._validate_day_column(
-                worksheet=worksheet,
-                day=day,
-            )
 
-            result, new_products = self._write_products(
-                worksheet=worksheet,
-                delivery=delivery,
-                product_index=product_index,
-                day_column=day_column,
-            )
+            applied: list[tuple[Delivery, _DeliveryResult]] = []
+            recovered: list[Delivery] = []
 
-            template_path: Path | None = None
+            for delivery in deliveries:
+                delivery_key = build_delivery_key(delivery)
+                payload_hash = build_payload_hash(delivery)
 
-            if new_products:
-                template_path = self.template_manager.get_template_path(
-                    sales_point=sales_point_name,
-                )
-
-                template_workbook, template_worksheet = self.excel_reader.read(
-                    workbook_path=template_path,
-                )
-
-                result.created_in_template = self._update_template(
-                    template_worksheet=template_worksheet,
-                    new_products=new_products,
-                )
-
-            # La plantilla se guarda primero. Si después falla el mensual,
-            # el reintento simplemente encontrará esos productos ya creados.
-            if template_workbook is not None and template_path is not None:
-                if result.created_in_template > 0:
-                    self._create_backup(
-                        source_path=template_path,
-                        category="templates",
-                    )
-                    self._atomic_save_workbook(
-                        workbook=template_workbook,
-                        target_path=template_path,
+                # Comprobaciones previas: no modifican el libro.
+                try:
+                    applied_hash = self._find_applied_delivery_hash(
+                        sync_sheet=sync_sheet,
+                        delivery_key=delivery_key,
                     )
 
-            # La marca se introduce en el mismo libro y se guarda junto con
-            # las cantidades. Por eso ambas operaciones quedan vinculadas.
-            self._append_delivery_marker(
-                sync_sheet=sync_sheet,
-                delivery=delivery,
-                delivery_key=delivery_key,
-                payload_hash=payload_hash,
+                    if applied_hash is not None:
+                        self._check_applied_hash(
+                            delivery_key=delivery_key,
+                            expected_hash=payload_hash,
+                            applied_hash=applied_hash,
+                        )
+                        recovered.append(delivery)
+                        continue
+
+                    day_column = self._validate_day_column(
+                        worksheet=worksheet,
+                        day=self._as_date(delivery.delivery_date).day,
+                    )
+
+                except Exception as error:
+                    self._record_error(totals, delivery, error)
+                    continue
+
+                # Escritura: si falla aquí, el libro queda a medias.
+                try:
+                    result = self._write_products(
+                        worksheet=worksheet,
+                        delivery=delivery,
+                        product_index=product_index,
+                        day_column=day_column,
+                    )
+                    self._append_delivery_marker(
+                        sync_sheet=sync_sheet,
+                        delivery=delivery,
+                        delivery_key=delivery_key,
+                        payload_hash=payload_hash,
+                    )
+                except Exception as error:
+                    self._record_error(totals, delivery, error)
+                    self._last_failed_ids = {id(delivery)}
+                    workbook.close()
+                    return None
+
+                applied.append((delivery, result))
+
+        except Exception:
+            workbook.close()
+            raise
+
+        return workbook, applied, recovered
+
+    def _update_template_file(
+        self,
+        sales_point_name: str,
+        new_products: list[Product],
+    ) -> int:
+        """
+        Añade a la plantilla los productos nuevos y la guarda si cambió.
+
+        La plantilla se guarda antes que el mensual. Si después falla el
+        mensual, el reintento simplemente encontrará esos productos ya
+        creados.
+        """
+
+        template_path = self.template_manager.get_template_path(
+            sales_point=sales_point_name,
+        )
+
+        template_workbook, template_worksheet = self.excel_reader.read(
+            workbook_path=template_path,
+        )
+
+        try:
+            created_count = self._update_template(
+                template_worksheet=template_worksheet,
+                new_products=new_products,
             )
 
-            self._create_backup(source_path=excel_path, category="monthly")
+            if created_count > 0:
+                self._create_backup(source_path=template_path, category="templates")
+                self._atomic_save_workbook(
+                    workbook=template_workbook,
+                    target_path=template_path,
+                )
 
-            self._atomic_save_workbook(
-                workbook=workbook,
-                target_path=excel_path,
-            )
-
-            # Solo después de confirmar el Excel en disco se actualiza
-            # el Registry. Si este guardado falla, el marcador del Excel
-            # impedirá volver a sumar cantidades en el siguiente intento.
-            self._mark_registry_synchronized(delivery)
-
-            return result
+            return created_count
 
         finally:
-            if template_workbook is not None:
-                template_workbook.close()
+            template_workbook.close()
 
-            if workbook is not None:
-                workbook.close()
-
-    def _recover_already_applied_delivery(
+    def _check_applied_hash(
         self,
-        delivery: Delivery,
         delivery_key: str,
         expected_hash: str,
         applied_hash: str,
-    ) -> _DeliveryResult:
+    ) -> None:
         """
-        Repara el Registry sin volver a escribir una entrega que ya
-        figura aplicada dentro del Excel mensual.
+        Una entrega ya aplicada en el Excel solo se da por recuperada si
+        su contenido coincide exactamente con el actual.
         """
 
         if applied_hash != expected_hash:
@@ -334,10 +455,6 @@ class Synchronizer:
                 "fecha y punto de venta, pero sus productos no coinciden. "
                 f"Identificador: {delivery_key}. No se ha modificado el Excel."
             )
-
-        self._mark_registry_synchronized(delivery)
-
-        return _DeliveryResult(recovered_from_excel=True)
 
     # ======================================================
     # PRODUCT WRITING
@@ -381,11 +498,10 @@ class Synchronizer:
         delivery: Delivery,
         product_index: dict[str, int],
         day_column: int,
-    ) -> tuple[_DeliveryResult, list[Product]]:
+    ) -> _DeliveryResult:
         """Busca, crea y escribe todos los productos de una entrega."""
 
         result = _DeliveryResult()
-        new_products: list[Product] = []
 
         for product in delivery.products:
             row, created = self.product_manager.find_or_create(
@@ -395,7 +511,7 @@ class Synchronizer:
             )
 
             if created:
-                new_products.append(product)
+                result.new_products.append(product)
                 result.created_in_month += 1
             else:
                 result.existing_in_month += 1
@@ -409,7 +525,7 @@ class Synchronizer:
 
             result.written += 1
 
-        return result, new_products
+        return result
 
     def _update_template(
         self,
@@ -540,47 +656,57 @@ class Synchronizer:
     # REGISTRY
     # ======================================================
 
-    def _ensure_registered(
+    def _ensure_registered_many(
         self,
-        delivery: Delivery,
+        deliveries: list[Delivery],
     ) -> None:
-        """Registra y persiste una entrega antes de modificar Excel."""
+        """Registra y persiste las entregas antes de modificar Excel."""
 
-        if self.registry.exists(delivery):
+        missing = [d for d in deliveries if not self.registry.exists(d)]
+
+        if not missing:
             return
 
         snapshot = deepcopy(self.registry.data)
 
         try:
-            self.registry.register(delivery)
+            for delivery in missing:
+                self.registry.register(delivery)
+
             self.registry.save()
 
-            if not self.registry.exists(delivery):
-                raise RuntimeError("El Registry no confirmó el registro de la entrega.")
+            if not all(self.registry.exists(d) for d in missing):
+                raise RuntimeError("El Registry no confirmó el registro de las entregas.")
 
         except Exception:
             self._restore_registry_snapshot(snapshot)
             raise
 
-    def _mark_registry_synchronized(
+    def _mark_registry_synchronized_many(
         self,
-        delivery: Delivery,
+        deliveries: list[Delivery],
     ) -> None:
         """Actualiza el Registry y revierte su memoria si falla el guardado."""
 
-        if not self.registry.exists(delivery):
-            raise ValueError(
-                "No se puede completar la sincronización porque la entrega "
-                "no está registrada."
-            )
+        if not deliveries:
+            return
 
         snapshot = deepcopy(self.registry.data)
 
         try:
-            self.registry.mark_as_synchronized(delivery)
+            for delivery in deliveries:
+                if not self.registry.exists(delivery):
+                    raise ValueError(
+                        "No se puede completar la sincronización porque la "
+                        "entrega no está registrada."
+                    )
 
-            if not self.registry.is_synchronized(delivery):
-                raise RuntimeError("El Registry no marcó la entrega como sincronizada.")
+                self.registry.mark_as_synchronized(delivery)
+
+                if not self.registry.is_synchronized(delivery):
+                    raise RuntimeError(
+                        "El Registry no marcó la entrega como sincronizada."
+                    )
 
             self.registry.save()
 

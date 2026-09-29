@@ -19,7 +19,6 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from math import isclose, isfinite
 from pathlib import Path
-from tkinter import Tk, filedialog
 from typing import Iterable
 from zipfile import BadZipFile
 import re
@@ -59,7 +58,7 @@ class ImportSummary:
     Contadores y mensajes de incidencia de una ejecución de importación.
 
     Se expone como ``Importer.last_summary`` después de ``run()`` para que
-    el llamante (``main.py``) pueda combinarlo con el resumen del
+    el llamante (``services.sync_pipeline``) pueda combinarlo con el resumen del
     ``Synchronizer`` y mostrar un único resumen final consolidado.
     """
 
@@ -109,7 +108,7 @@ class Importer:
     convierte en entregas agrupadas por fecha y punto de venta.
 
     El servicio:
-        1. Selecciona o recibe los Excel de origen.
+        1. Recibe los Excel de origen.
         2. Valida y procesa cada archivo de forma independiente.
         3. Agrupa productos por fecha y punto de venta.
         4. Construye las entregas.
@@ -152,7 +151,7 @@ class Importer:
         self.source_reader = source_reader or SourceReader()
 
         # Resumen de incidencias de la última llamada a run(), disponible
-        # para que main.py construya el resumen final consolidado.
+        # para que el pipeline construya el resumen final consolidado.
         self.last_summary = ImportSummary()
 
         self._sales_point_mapping = {
@@ -170,23 +169,19 @@ class Importer:
 
     def run(
         self,
-        excel_files: Iterable[Path | str] | Path | str | None = None,
+        excel_files: Iterable[Path | str] | Path | str,
     ) -> list[Delivery]:
         """
         Ejecuta el proceso completo de importación.
 
         Args:
-            excel_files: Archivos que se deben procesar. Cuando no se
-                proporcionan, se abre el explorador de archivos.
+            excel_files: Archivos que se deben procesar.
 
         Returns:
             Entregas nuevas o pendientes de sincronización.
         """
 
-        if excel_files is None:
-            selected_files = self._select_excel_files()
-        else:
-            selected_files = self._normalize_file_paths(excel_files)
+        selected_files = self._normalize_file_paths(excel_files)
 
         if not selected_files:
             self.last_summary = ImportSummary()
@@ -404,32 +399,6 @@ class Importer:
     # ======================================================
     # FILE PROCESSING
     # ======================================================
-
-    def _select_excel_files(self) -> list[Path]:
-        """
-        Abre el explorador para seleccionar los Excel de origen.
-        """
-
-        root = Tk()
-
-        try:
-            root.withdraw()
-            root.attributes("-topmost", True)
-
-            files = filedialog.askopenfilenames(
-                title="Seleccionar archivos Excel de Economato",
-                filetypes=[
-                    (
-                        "Archivos Excel",
-                        f"*{SOURCE_EXCEL_EXTENSION}",
-                    ),
-                ],
-            )
-
-        finally:
-            root.destroy()
-
-        return self._normalize_file_paths(files)
 
     def _normalize_file_paths(
         self,

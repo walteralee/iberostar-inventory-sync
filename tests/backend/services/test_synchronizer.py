@@ -293,3 +293,71 @@ class TestValidation:
     def test_run_rejects_a_non_list_argument(self, synchronizer):
         with pytest.raises(ValueError):
             synchronizer.run(None)
+
+
+class TestBatchedSynchronization:
+    def test_several_days_of_the_same_month_are_saved_with_a_single_backup(
+        self, synchronizer, paths, tmp_path
+    ):
+        monthly_dir, _ = paths
+        excel_path = monthly_dir / "Bar_Piscina_Julio_2026.xlsx"
+        _build_monthly_workbook(excel_path)
+
+        totals = synchronizer.run(
+            [
+                _make_delivery(day=1, quantity=10.0),
+                _make_delivery(day=2, quantity=20.0),
+                _make_delivery(day=3, quantity=30.0),
+            ]
+        )
+
+        assert totals.error_deliveries == 0
+        assert totals.synchronized_deliveries == 3
+        assert _day_cell_value(excel_path, day=1) == 10.0
+        assert _day_cell_value(excel_path, day=2) == 20.0
+        assert _day_cell_value(excel_path, day=3) == 30.0
+
+        backups = list((tmp_path / "backup" / "monthly").glob("*.xlsx"))
+        assert len(backups) == 1
+
+    def test_a_delivery_failing_mid_write_leaves_no_partial_data(
+        self, synchronizer, paths
+    ):
+        monthly_dir, _ = paths
+        excel_path = monthly_dir / "Bar_Piscina_Julio_2026.xlsx"
+        _build_monthly_workbook(excel_path)
+
+        # El día 2 trae dos productos: el primero se escribe y el segundo
+        # falla. Ninguna de sus cantidades debe llegar al archivo.
+        failing = Delivery(
+            sales_point=SalesPoint(name="Bar_Piscina"),
+            delivery_date=date(2026, 7, 2),
+            products=[
+                Product(code="1", name="PRODUCTO A", format="UNIDAD", price=1.0, quantity=5.0),
+                Product(code="2", name="PRODUCTO B", format="UNIDAD", price=1.0, quantity=666.0),
+            ],
+        )
+
+        real_write = synchronizer.excel_writer.write
+
+        def write_or_fail(worksheet, row, column, quantity):
+            if quantity == 666.0:
+                raise ValueError("fallo simulado")
+            return real_write(worksheet=worksheet, row=row, column=column, quantity=quantity)
+
+        synchronizer.excel_writer.write = write_or_fail
+
+        totals = synchronizer.run(
+            [
+                _make_delivery(day=1, quantity=10.0),
+                failing,
+                _make_delivery(day=3, quantity=30.0),
+            ]
+        )
+
+        assert totals.error_deliveries == 1
+        assert totals.synchronized_deliveries == 2
+        assert _day_cell_value(excel_path, day=1) == 10.0
+        assert _day_cell_value(excel_path, day=2) is None
+        assert _day_cell_value(excel_path, day=3) == 30.0
+        assert not synchronizer.registry.is_synchronized(failing)

@@ -17,7 +17,7 @@ Descripción:
 # ==========================================================
 
 PROJECT_NAME = "Iberostar Inventory Synchronizer"
-PROJECT_VERSION = "2.0.0"
+PROJECT_VERSION = "3.0.0"
 
 # ==========================================================
 # SALES POINTS

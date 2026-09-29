@@ -3,23 +3,32 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Iberostar · Gestor de pedidos</title>
+  <title>Iberostar · Gestor de Pedidos</title>
+  <link rel="icon" type="image/png" href="assets/icon.png" />
   <link rel="stylesheet" href="styles/main.css" />
 </head>
 <body>
   <header class="topbar">
-    <div class="topbar__brand">
-      <span class="topbar__logo">IB</span>
-      <div>
-        <h1>Iberostar Inventory Synchronizer</h1>
-        <p class="topbar__subtitle">Gestor de pedidos · Economato</p>
+    <div class="topbar__row">
+      <div class="topbar__brand">
+        <img class="topbar__logo" src="assets/icon.png" alt="" width="44" height="44" />
+        <div>
+          <h1>Gestor de Pedidos</h1>
+          <p class="topbar__subtitle">Sincronización de Economato con los Excel de cada punto de venta</p>
+        </div>
       </div>
+
+      <button id="open-folder-button" class="btn btn--on-dark" type="button">
+        <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4.38a1.5 1.5 0 0 1 1.06.44L11.5 7h8A1.5 1.5 0 0 1 21 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+        Abrir carpeta de Excel
+      </button>
     </div>
+
     <nav class="tabs" role="tablist">
-      <button class="tabs__button is-active" data-tab="sync" role="tab" aria-selected="true">
+      <button class="tabs__button is-active" data-tab="sync" role="tab" aria-selected="true" aria-controls="panel-sync">
         Sincronizar
       </button>
-      <button class="tabs__button" data-tab="export" role="tab" aria-selected="false">
+      <button class="tabs__button" data-tab="export" role="tab" aria-selected="false" aria-controls="panel-export">
         Exportar
       </button>
     </nav>
@@ -30,35 +39,39 @@
     <!-- ================= SINCRONIZAR ================= -->
     <section id="panel-sync" class="panel is-active" role="tabpanel">
       <div class="card">
-        <h2>Importar y sincronizar Excel de Economato</h2>
+        <h2>Importar informes de Economato</h2>
         <p class="card__hint">
-          Selecciona uno o varios informes de Economato. Se agruparán por fecha y
-          punto de venta, y se volcarán automáticamente en los Excel mensuales.
+          Añade uno o varios informes. Los movimientos se agrupan por fecha y
+          punto de venta y se vuelcan automáticamente en el Excel mensual que
+          corresponda. Importar dos veces el mismo informe es seguro: nada se
+          suma dos veces.
         </p>
 
         <label for="file-input" id="dropzone" class="dropzone">
           <input type="file" id="file-input" accept=".xlsx" multiple hidden />
-          <span class="dropzone__icon">⇪</span>
+          <svg class="dropzone__icon" aria-hidden="true" viewBox="0 0 24 24" width="36" height="36"><path d="M12 15V4m0 0L7.5 8.5M12 4l4.5 4.5M4 15v3.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
           <span class="dropzone__text">
-            Arrastra aquí los Excel de Economato o haz clic para seleccionarlos
+            <strong>Arrastra aquí los Excel</strong> o haz clic para seleccionarlos
           </span>
+          <span class="dropzone__hint">Solo archivos .xlsx</span>
         </label>
 
         <ul id="file-list" class="file-list"></ul>
 
         <div class="actions">
-          <button id="sync-button" class="btn btn--primary" disabled>
-            Sincronizar
+          <button id="sync-button" class="btn btn--primary" type="button" disabled>
+            <span class="spinner" aria-hidden="true"></span>
+            <span class="btn__label">Sincronizar</span>
           </button>
-          <button id="clear-files-button" class="btn btn--ghost" disabled>
+          <button id="clear-files-button" class="btn btn--ghost" type="button" disabled>
             Quitar todos
           </button>
         </div>
 
-        <div id="sync-status" class="status" hidden></div>
+        <div id="sync-status" class="status" role="status" hidden></div>
       </div>
 
-      <div id="sync-results"></div>
+      <div id="sync-results" aria-live="polite"></div>
     </section>
 
     <!-- ================= EXPORTAR ================= -->
@@ -66,8 +79,8 @@
       <div class="card">
         <h2>Exportar Excel mensual</h2>
         <p class="card__hint">
-          Descarga el Excel de control de stock ya sincronizado de un punto de
-          venta, mes y año concretos.
+          Guarda una copia del Excel de control de stock ya sincronizado de un
+          punto de venta, mes y año concretos.
         </p>
 
         <div class="form-grid">
@@ -88,17 +101,20 @@
         </div>
 
         <div class="actions">
-          <button id="export-button" class="btn btn--primary">Descargar Excel</button>
+          <button id="export-button" class="btn btn--primary" type="button">
+            <span class="spinner" aria-hidden="true"></span>
+            <span class="btn__label">Guardar Excel</span>
+          </button>
         </div>
 
-        <div id="export-status" class="status" hidden></div>
+        <div id="export-status" class="status" role="status" hidden></div>
       </div>
     </section>
 
   </main>
 
   <footer class="footer">
-    <span>Iberostar Inventory Synchronizer</span>
+    <span id="app-version">Iberostar Inventory Synchronizer</span>
   </footer>
 
   <script src="services/api.js"></script>

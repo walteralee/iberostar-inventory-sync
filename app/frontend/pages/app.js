@@ -85,17 +85,24 @@
         const name = document.createElement("span");
         name.className = "file-list__name";
         name.textContent = file.name;
+        name.title = file.name;
+
+        const size = document.createElement("span");
+        size.className = "file-list__size";
+        size.textContent = formatBytes(file.size);
 
         const removeButton = document.createElement("button");
         removeButton.className = "file-list__remove";
         removeButton.type = "button";
         removeButton.textContent = "✕";
+        removeButton.setAttribute("aria-label", `Quitar ${file.name}`);
         removeButton.addEventListener("click", () => {
           selectedFiles.splice(index, 1);
           renderFileList();
         });
 
         item.appendChild(name);
+        item.appendChild(size);
         item.appendChild(removeButton);
         fileList.appendChild(item);
       });
@@ -106,9 +113,19 @@
     }
 
     function addFiles(fileListLike) {
-      const incoming = Array.from(fileListLike).filter((file) =>
-        file.name.toLowerCase().endsWith(".xlsx")
-      );
+      const all = Array.from(fileListLike);
+      const incoming = all.filter((file) => file.name.toLowerCase().endsWith(".xlsx"));
+      const rejected = all.length - incoming.length;
+
+      if (rejected > 0) {
+        showStatus(
+          statusBox,
+          "warning",
+          `${rejected} ${pluralize(rejected, "archivo ignorado", "archivos ignorados")}: solo se admiten Excel (.xlsx).`
+        );
+      } else {
+        hideStatus(statusBox);
+      }
 
       const existingKeys = new Set(
         selectedFiles.map((file) => `${file.name}__${file.size}`)
@@ -158,10 +175,10 @@
     syncButton.addEventListener("click", async () => {
       if (selectedFiles.length === 0) return;
 
-      syncButton.disabled = true;
+      setBusy(syncButton, true, "Sincronizando…");
       clearButton.disabled = true;
       resultsBox.innerHTML = "";
-      showStatus(statusBox, "info", "Sincronizando, esto puede tardar unos segundos…");
+      showStatus(statusBox, "info", "Sincronizando, esto puede tardar unos segundos. No cierres la aplicación.");
 
       try {
         const result = await Api.syncFiles(selectedFiles);
@@ -176,6 +193,7 @@
       } catch (error) {
         showStatus(statusBox, "error", error.message);
       } finally {
+        setBusy(syncButton, false);
         syncButton.disabled = selectedFiles.length === 0;
         clearButton.disabled = selectedFiles.length === 0;
       }
@@ -192,6 +210,26 @@
 
   function hideStatus(box) {
     box.hidden = true;
+  }
+
+  function setBusy(button, busy, busyLabel) {
+    const label = button.querySelector(".btn__label");
+
+    if (busy) {
+      button.dataset.idleLabel = label.textContent;
+      label.textContent = busyLabel;
+    } else if (button.dataset.idleLabel) {
+      label.textContent = button.dataset.idleLabel;
+    }
+
+    button.disabled = busy;
+    button.classList.toggle("is-busy", busy);
+  }
+
+  function formatBytes(bytes) {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
 
   // ================= SYNC RESULTS =================
@@ -223,8 +261,8 @@
       ...pendingWarnings,
     ];
 
-    const deliveriesApplied =
-      syncTotals.synchronized_deliveries + syncTotals.recovered_deliveries;
+    // synchronized_deliveries ya incluye las recuperadas desde el Excel.
+    const deliveriesApplied = syncTotals.synchronized_deliveries;
 
     const summary = document.createElement("div");
     summary.className = "summary";
@@ -236,9 +274,9 @@
       : "is-ok";
 
     const bannerText = {
-      "is-ok": "✅ Sincronización completada sin incidencias.",
-      "is-warning": "⚠️ Sincronización completada con avisos.",
-      "is-error": "❌ Sincronización completada con errores.",
+      "is-ok": "Sincronización completada sin incidencias",
+      "is-warning": "Sincronización completada con avisos",
+      "is-error": "Sincronización completada con errores",
     }[tone];
 
     const banner = document.createElement("div");
@@ -246,10 +284,14 @@
     banner.textContent = bannerText;
     summary.appendChild(banner);
 
-    const meta = document.createElement("p");
-    meta.className = "summary__meta";
-    meta.textContent = buildMetaLine(deliveriesApplied, syncTotals);
-    summary.appendChild(meta);
+    summary.appendChild(
+      buildStats([
+        [deliveriesApplied, "Entregas sincronizadas"],
+        [syncTotals.products_written, "Productos escritos"],
+        [syncTotals.created_in_month, "Productos nuevos"],
+        [syncTotals.skipped_deliveries, "Ya estaban sincronizadas"],
+      ])
+    );
 
     const incidentCount = errorMessages.length + warningMessages.length;
 
@@ -275,23 +317,28 @@
     container.appendChild(summary);
   }
 
-  function buildMetaLine(deliveriesApplied, syncTotals) {
-    const parts = [
-      `${deliveriesApplied} ${pluralize(deliveriesApplied, "entrega sincronizada", "entregas sincronizadas")}`,
-      `${syncTotals.products_written} ${pluralize(syncTotals.products_written, "producto escrito", "productos escritos")}`,
-    ];
+  function buildStats(items) {
+    const grid = document.createElement("div");
+    grid.className = "stats";
 
-    if (syncTotals.skipped_deliveries > 0) {
-      parts.push(
-        `${syncTotals.skipped_deliveries} ya ${pluralize(
-          syncTotals.skipped_deliveries,
-          "estaba sincronizada",
-          "estaban sincronizadas"
-        )}`
-      );
-    }
+    items.forEach(([value, label]) => {
+      const tile = document.createElement("div");
+      tile.className = "stats__tile";
 
-    return parts.join(" · ");
+      const number = document.createElement("span");
+      number.className = "stats__value";
+      number.textContent = value.toLocaleString("es-ES");
+
+      const caption = document.createElement("span");
+      caption.className = "stats__label";
+      caption.textContent = label;
+
+      tile.appendChild(number);
+      tile.appendChild(caption);
+      grid.appendChild(tile);
+    });
+
+    return grid;
   }
 
   function ignoredRowBullets(importSummary) {
@@ -414,9 +461,10 @@
         if (years.length === 0) {
           const option = document.createElement("option");
           option.value = "";
-          option.textContent = "Sin Excel sincronizados todavía";
+          option.textContent = "Sin datos todavía";
           yearSelect.appendChild(option);
           populateMonths("");
+          exportButton.disabled = true;
           return;
         }
 
@@ -434,6 +482,7 @@
 
         yearSelect.value = targetYear;
         populateMonths(targetYear, previousMonth);
+        exportButton.disabled = false;
       } catch (error) {
         showStatus(statusBox, "error", `No se pudo cargar la información: ${error.message}`);
       }
@@ -453,16 +502,17 @@
         return;
       }
 
-      exportButton.disabled = true;
-      showStatus(statusBox, "info", "Preparando la descarga…");
+      setBusy(exportButton, true, "Guardando…");
+      hideStatus(statusBox);
 
       try {
-        await Api.downloadExport(salesPoint, year, month);
-        showStatus(statusBox, "success", "Descarga completada.");
+        const message = await Api.exportExcel(salesPoint, year, month);
+        if (message) showStatus(statusBox, "success", message);
       } catch (error) {
         showStatus(statusBox, "error", error.message);
       } finally {
-        exportButton.disabled = false;
+        setBusy(exportButton, false);
+        exportButton.disabled = !monthSelect.value;
       }
     });
 
@@ -470,7 +520,33 @@
     load(false);
   }
 
+  // ================= APP SHELL =================
+
+  function initShell() {
+    const openFolderButton = document.getElementById("open-folder-button");
+    const syncStatus = document.getElementById("sync-status");
+
+    openFolderButton.addEventListener("click", async () => {
+      try {
+        await Api.openFolder();
+      } catch (error) {
+        showStatus(syncStatus, "error", error.message);
+      }
+    });
+
+    Api.getInfo()
+      .then((info) => {
+        document.getElementById("app-version").textContent =
+          `${info.name} · v${info.version}`;
+      })
+      .catch(() => {});
+
+    // Mantiene viva la aplicación cuando se ejecuta en el navegador.
+    setInterval(Api.ping, 20000);
+  }
+
   document.addEventListener("DOMContentLoaded", () => {
+    initShell();
     initTabs();
     initSyncPanel();
     initExportPanel();

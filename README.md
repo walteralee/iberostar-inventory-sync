@@ -124,6 +124,35 @@ Inno Setup · GitHub Actions
 
 ---
 
+## 🤖 How it was built (agentic workflow)
+
+I built this project with **Claude Code** as my main development tool. The agent did most of
+the typing; I owned the specification, the task breakdown, the review and the proof.
+
+**1. Specification.** I started from the real problem at the hotel: warehouse reports had to be
+copied by hand into a monthly stock Excel per point of sale. I wrote down the rules before any
+code: how to detect the data sheet, how to normalise Spanish numbers and dates, how to group
+deliveries by date and point of sale, and the hard constraint — *a delivery must never be added
+twice*. See [docs/architecture.md](docs/architecture.md) and [docs/excel_format.md](docs/excel_format.md).
+
+**2. Steering the agent.** I split the work into small layers (importer → registry →
+synchronizer → Excel writer → API → desktop app) and asked the agent for one piece at a time,
+reviewing each change before moving on. When version 2 (PDF delivery notes) stopped fitting the
+hotel's workflow, I re-specified the input as a single consolidated Excel and rebuilt the
+pipeline around it (v3).
+
+**3. Proving it works.**
+- **104 automated tests** (pytest) covering reading, writing, registry, synchronisation and the API.
+- **CI on every push** with GitHub Actions; tagged versions are built and published automatically.
+- **Real data:** an 8-month report (~9,000 lines) went from over an hour to ~25 seconds after
+  grouping writes per workbook.
+- **Bugs caught by review:** e.g. recovered deliveries were being counted twice in the summary —
+  found and fixed (see [CHANGELOG](CHANGELOG.md)).
+
+The app is in daily use at an Iberostar hotel.
+
+---
+
 ## 💻 Desarrollo
 
 <details>
